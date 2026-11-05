@@ -8,9 +8,11 @@ import (
 	"errors"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,13 +20,14 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"taskwatch/internal/engine"
+	"taskwatch/internal/settings"
 	"taskwatch/internal/view"
 )
 
 //go:embed frontend
 var frontend embed.FS
 
-func Run(eng *engine.Engine, configPath string) error {
+func Run(eng *engine.Engine, svc *settings.Service) error {
 	assets, err := fs.Sub(frontend, "frontend")
 	if err != nil {
 		return err
@@ -37,7 +40,7 @@ func Run(eng *engine.Engine, configPath string) error {
 		Name:        "taskwatch",
 		Description: "Таски спринта, MR и ревью",
 		Assets: application.AssetOptions{
-			Handler:        newHandler(eng, configPath, application.AssetFileServerFS(assets), openURL),
+			Handler:        newHandler(eng, svc, application.AssetFileServerFS(assets), openURL),
 			DisableLogging: true,
 		},
 		Mac: application.MacOptions{
@@ -112,11 +115,18 @@ func Run(eng *engine.Engine, configPath string) error {
 	return app.Run()
 }
 
-// guardOrigin отклоняет кросс-доменные запросы к локальному API: страница любого сайта
-// может отправить POST на 127.0.0.1 без preflight, поэтому сверяем Origin с Host.
-// Нужен только для web-режима: в app-режиме API живёт внутри webview и наружу не торчит.
+// guardOrigin защищает локальный API web-режима от чужих страниц. Страница любого
+// сайта может отправить POST на 127.0.0.1 без preflight — поэтому Origin должен
+// совпадать с Host. А чтобы не пройти через DNS rebinding (домен злоумышленника,
+// указывающий на 127.0.0.1, даёт совпадающие Origin и Host), Host должен быть
+// loopback-адресом или localhost. В app-режиме API живёт внутри webview и наружу
+// не торчит — там защита не нужна.
 func guardOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !loopbackHost(r.Host) {
+			http.Error(w, "only loopback hosts are served", http.StatusForbidden)
+			return
+		}
 		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
 			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 			return
@@ -125,14 +135,28 @@ func guardOrigin(next http.Handler) http.Handler {
 	})
 }
 
+// loopbackHost — Host запроса указывает на эту машину: localhost или loopback-IP.
+func loopbackHost(hostport string) bool {
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		host = hostport
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
 // Serve отдаёт то же окно обычным HTTP — для отладки в браузере (taskwatch web).
-func Serve(ctx context.Context, eng *engine.Engine, configPath, addr string) error {
+// Отвечает только на loopback-адреса.
+func Serve(ctx context.Context, eng *engine.Engine, svc *settings.Service, addr string) error {
 	assets, err := fs.Sub(frontend, "frontend")
 	if err != nil {
 		return err
 	}
 	openURL := func(url string) error { return exec.Command("open", url).Run() }
-	handler := guardOrigin(newHandler(eng, configPath, http.FileServerFS(assets), openURL))
+	handler := guardOrigin(newHandler(eng, svc, http.FileServerFS(assets), openURL))
 	srv := &http.Server{Addr: addr, Handler: handler}
 
 	go eng.Run(ctx)

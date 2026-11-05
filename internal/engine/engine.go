@@ -12,15 +12,18 @@ import (
 
 	"taskwatch/internal/config"
 	"taskwatch/internal/domain"
-	"taskwatch/internal/notify"
+	"taskwatch/internal/integrations/youtrack"
 	"taskwatch/internal/rules"
 	"taskwatch/internal/state"
 	"taskwatch/internal/watch"
-	"taskwatch/internal/youtrack"
 )
 
 // errNotConfigured — конфиг ещё не заполнен, движок ждёт настройки из UI.
 var errNotConfigured = errors.New("настройки не заполнены — открой настройки и введи токен")
+
+// NotifyFunc показывает уведомление; group — ключ события, по нему macOS
+// заменяет уведомление, а не дублирует.
+type NotifyFunc func(title, message, url, group string) error
 
 // deps — неизменяемый набор конфига и клиентов; Reload подменяет его целиком,
 // поэтому Tick и Reload не мешают друг другу без блокировок.
@@ -32,6 +35,7 @@ type deps struct {
 
 type Engine struct {
 	store   *state.Store
+	notify  NotifyFunc
 	refresh chan struct{}
 	deps    atomic.Pointer[deps]
 
@@ -48,8 +52,8 @@ type Engine struct {
 	recheck bool
 }
 
-func New(cfg *config.Config, collector *watch.Collector, store *state.Store, yt *youtrack.Client) *Engine {
-	e := &Engine{store: store, refresh: make(chan struct{}, 1)}
+func New(cfg *config.Config, collector *watch.Collector, store *state.Store, yt *youtrack.Client, notify NotifyFunc) *Engine {
+	e := &Engine{store: store, notify: notify, refresh: make(chan struct{}, 1)}
 	e.deps.Store(&deps{cfg: cfg, collector: collector, yt: yt})
 	return e
 }
@@ -81,7 +85,7 @@ func (e *Engine) Run(ctx context.Context) {
 			}
 		}
 		// Интервал перечитываем каждый цикл: новые настройки вступают в силу сразу.
-		timer := time.NewTimer(e.Config().PollInterval)
+		timer := time.NewTimer(pollInterval(e.Config()))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -91,6 +95,15 @@ func (e *Engine) Run(ctx context.Context) {
 			timer.Stop()
 		}
 	}
+}
+
+// pollInterval — пауза между тиками. Неположительный интервал из битого yaml
+// превратил бы цикл в долбёжку API, поэтому берём дефолт.
+func pollInterval(cfg *config.Config) time.Duration {
+	if cfg.PollInterval <= 0 {
+		return config.DefaultPollInterval
+	}
+	return cfg.PollInterval
 }
 
 // Refresh просит Run сделать внеочередной проход.
@@ -172,7 +185,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 		}
 		if !seed {
 			e.autoTransition(ctx, d, &ev)
-			if err := notify.Send(ev.Title, ev.Message, ev.URL, ev.Key); err != nil {
+			if err := e.notify(ev.Title, ev.Message, ev.URL, ev.Key); err != nil {
 				log.Printf("notify %s: %v", ev.Key, err)
 				continue
 			}

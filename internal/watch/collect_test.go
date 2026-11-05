@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"taskwatch/internal/config"
-	"taskwatch/internal/gitlab"
+	"taskwatch/internal/integrations/gitlab"
+	"taskwatch/internal/integrations/youtrack"
 	"taskwatch/internal/testutil/fakeapi"
-	"taskwatch/internal/youtrack"
 )
 
 func newCollector(srv *fakeapi.Server, youtrackOn bool, mutate func(*config.Config)) *Collector {

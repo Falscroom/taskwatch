@@ -17,11 +17,13 @@ import (
 
 	"taskwatch/internal/config"
 	"taskwatch/internal/engine"
-	"taskwatch/internal/gitlab"
+	"taskwatch/internal/integrations/gitlab"
+	"taskwatch/internal/integrations/youtrack"
+	"taskwatch/internal/settings"
 	"taskwatch/internal/state"
 	"taskwatch/internal/testutil/fakeapi"
+	"taskwatch/internal/testutil/fakesecrets"
 	"taskwatch/internal/watch"
-	"taskwatch/internal/youtrack"
 )
 
 func TestMain(m *testing.M) {
@@ -33,11 +35,12 @@ type apiHarness struct {
 	handler    http.Handler
 	eng        *engine.Engine
 	configPath string
+	secrets    *fakesecrets.Store
 	opened     []string
 }
 
-// newAPI поднимает обработчик API поверх движка с заданным конфигом. Токены в
-// конфиге уже есть, а форма шлёт пустые — значит, Связку ключей тесты не трогают.
+// newAPI поднимает обработчик API поверх движка с заданным конфигом. Токены
+// хранятся в памяти (fakesecrets), уведомления никуда не уходят.
 func newAPI(t *testing.T, cfg *config.Config) *apiHarness {
 	t.Helper()
 	dir := t.TempDir()
@@ -51,10 +54,12 @@ func newAPI(t *testing.T, cfg *config.Config) *apiHarness {
 		t.Fatal(err)
 	}
 	yt := youtrack.New(cfg.YouTrack.URL, cfg.YouTrack.Token)
-	eng := engine.New(cfg, watch.NewCollector(cfg, gitlab.New(cfg.GitLab.URL, cfg.GitLab.Token), yt), store, yt)
-	h := &apiHarness{eng: eng, configPath: path}
+	noop := func(title, message, url, key string) error { return nil }
+	eng := engine.New(cfg, watch.NewCollector(cfg, gitlab.New(cfg.GitLab.URL, cfg.GitLab.Token), yt), store, yt, noop)
+	h := &apiHarness{eng: eng, configPath: path, secrets: fakesecrets.New(nil)}
 	assets := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "asset:"+r.URL.Path) })
-	h.handler = newHandler(eng, path, assets, func(u string) error { h.opened = append(h.opened, u); return nil })
+	svc := settings.New(path, h.secrets)
+	h.handler = newHandler(eng, svc, assets, func(u string) error { h.opened = append(h.opened, u); return nil })
 	return h
 }
 
@@ -98,7 +103,6 @@ func TestView(t *testing.T) {
 
 // Сквозной путь: GitLab → сборщик → движок → /api/view в том виде, что ждёт фронт.
 func TestViewEndToEnd(t *testing.T) {
-	t.Setenv("PATH", "") // уведомления не отправляются
 	srv := fakeapi.New(t)
 	broken := fakeapi.MR{MergeRequest: gitlab.MergeRequest{ID: 101, IID: 1, ProjectID: 1, State: "opened", Title: "Broken",
 		HasConflicts: true, BlockingDiscussionsResolved: true, Author: gitlab.User{Username: "me", Name: "Me Myself"}}}
@@ -333,6 +337,64 @@ func TestSaveConfigRejectsBadInput(t *testing.T) {
 	}
 }
 
+func TestSaveConfigStoresNewToken(t *testing.T) {
+	srv := fakeapi.New(t)
+	h := newAPI(t, configured(srv.URL))
+	form := formFor(srv.URL)
+	form["gitlab"].(map[string]any)["token"] = " glpat-new "
+	if rec := h.do(t, http.MethodPost, "/api/config", form); rec.Code != 204 {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body)
+	}
+	if got := h.secrets.All(); got["gitlab"] != "glpat-new" || len(got) != 1 {
+		t.Errorf("secrets = %v (unchanged youtrack token must not be rewritten)", got)
+	}
+	if h.eng.Config().GitLab.Token != "glpat-new" {
+		t.Errorf("engine token = %q", h.eng.Config().GitLab.Token)
+	}
+}
+
+// Смена адреса сервиса без нового токена отклоняется: иначе прежний токен
+// ушёл бы на новый хост.
+func TestSaveConfigURLChangeNeedsToken(t *testing.T) {
+	srv := fakeapi.New(t)
+	h := newAPI(t, configured(srv.URL))
+	form := formFor(srv.URL)
+	form["gitlab"].(map[string]any)["url"] = "https://other.example"
+	rec := h.do(t, http.MethodPost, "/api/config", form)
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "введи токен заново") {
+		t.Errorf("status = %d (%s)", rec.Code, rec.Body)
+	}
+	if _, err := os.Stat(h.configPath); !os.IsNotExist(err) {
+		t.Error("rejected form must not be saved")
+	}
+}
+
+func TestConfigTestDoesNotSendTokenToNewHost(t *testing.T) {
+	srv, other := fakeapi.New(t), fakeapi.New(t)
+	h := newAPI(t, configured(srv.URL))
+	form := formFor(srv.URL)
+	form["gitlab"].(map[string]any)["url"] = other.URL
+	if rec := h.do(t, http.MethodPost, "/api/config/test", form); rec.Code != 400 {
+		t.Errorf("status = %d (%s)", rec.Code, rec.Body)
+	}
+	if reqs := other.Requests(); len(reqs) != 0 {
+		t.Errorf("new host got requests with the old token: %v", reqs)
+	}
+}
+
+func TestDisableService(t *testing.T) {
+	srv := fakeapi.New(t)
+	h := newAPI(t, configured(srv.URL))
+	form := formFor(srv.URL)
+	form["youtrack"] = map[string]any{"url": "", "login": "", "query": "", "token": ""}
+	if rec := h.do(t, http.MethodPost, "/api/config", form); rec.Code != 204 {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body)
+	}
+	if cfg := h.eng.Config(); cfg.YouTrack != (config.YouTrack{}) || !cfg.GitLabOK() {
+		t.Errorf("config = %+v", cfg)
+	}
+}
+
 func TestConfigTest(t *testing.T) {
 	srv := fakeapi.New(t)
 	srv.GitLabUser = "gl-me"
@@ -371,8 +433,12 @@ func TestGuardOrigin(t *testing.T) {
 	}{
 		{"127.0.0.1:7777", "", 204},
 		{"127.0.0.1:7777", "http://127.0.0.1:7777", 204},
+		{"localhost:7777", "http://localhost:7777", 204},
+		{"[::1]:7777", "", 204},
 		{"127.0.0.1:7777", "https://evil.example", 403},
 		{"127.0.0.1:7777", "http://localhost:7777", 403},
+		{"192.168.1.5:7777", "", 403},
+		{"rebind.evil.example:7777", "http://rebind.evil.example:7777", 403},
 	}
 	for _, tc := range cases {
 		r := httptest.NewRequest(http.MethodPost, "/api/config", nil)
@@ -388,10 +454,9 @@ func TestGuardOrigin(t *testing.T) {
 	}
 }
 
-// Известная дыра: при DNS rebinding Origin и Host совпадают (оба — домен
-// злоумышленника), и запрос проходит.
+// DNS rebinding: Origin и Host совпадают (оба — домен злоумышленника, который
+// смотрит на 127.0.0.1). Отсекается проверкой, что Host — loopback.
 func TestGuardOriginRejectsForeignHost(t *testing.T) {
-	t.Skip("known bug: DNS rebinding passes the Origin==Host check; fix with a Host allowlist")
 	h := guardOrigin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	r := httptest.NewRequest(http.MethodPost, "/api/config", nil)
 	r.Host = "rebind.evil.example:7777"

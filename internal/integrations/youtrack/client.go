@@ -1,31 +1,24 @@
+// Package youtrack — клиент нужной части YouTrack REST API.
 package youtrack
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
-	"taskwatch/internal/req"
+	"taskwatch/internal/integrations/httpx"
 )
 
 type Client struct {
-	base  string
-	token string
-	http  *http.Client
+	api *httpx.Client
 }
 
-func New(baseURL, token string) *Client {
-	return &Client{
-		base:  strings.TrimRight(baseURL, "/"),
-		token: token,
-		http:  &http.Client{Timeout: 30 * time.Second},
-	}
+// New — клиент YouTrack REST API; opts — для тестов (паузы повторов).
+func New(baseURL, token string, opts ...httpx.Option) *Client {
+	auth := func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
+	return &Client{api: httpx.New("youtrack", baseURL, auth, opts...)}
 }
 
 type CustomField struct {
@@ -86,13 +79,13 @@ func (c *Client) Issues(ctx context.Context, query string) ([]Issue, error) {
 		"$top":   {"100"},
 	}
 	var out []Issue
-	return out, c.do(ctx, http.MethodGet, "/api/issues", q, nil, &out)
+	return out, c.api.Get(ctx, "/api/issues", q, &out)
 }
 
 func (c *Client) Comments(ctx context.Context, issueID string) ([]Comment, error) {
 	q := url.Values{"fields": {"id,text,created,author(login)"}, "$top": {"100"}}
 	var out []Comment
-	return out, c.do(ctx, http.MethodGet, "/api/issues/"+url.PathEscape(issueID)+"/comments", q, nil, &out)
+	return out, c.api.Get(ctx, "/api/issues/"+url.PathEscape(issueID)+"/comments", q, &out)
 }
 
 // Command применяет команду YouTrack к задаче, например "State Ready for QA".
@@ -101,11 +94,11 @@ func (c *Client) Command(ctx context.Context, issueID, command string) error {
 		"query":  command,
 		"issues": []map[string]string{{"idReadable": issueID}},
 	}
-	return c.do(ctx, http.MethodPost, "/api/commands", nil, body, nil)
+	return c.api.Post(ctx, "/api/commands", body, nil)
 }
 
 func (c *Client) IssueURL(issueID string) string {
-	return c.base + "/issue/" + issueID
+	return c.api.Base() + "/issue/" + issueID
 }
 
 // CurrentUser проверяет токен и возвращает логин его владельца.
@@ -113,59 +106,6 @@ func (c *Client) CurrentUser(ctx context.Context) (string, error) {
 	var out struct {
 		Login string `json:"login"`
 	}
-	err := c.do(ctx, http.MethodGet, "/users/me", url.Values{"fields": {"login"}}, nil, &out)
+	err := c.api.Get(ctx, "/users/me", url.Values{"fields": {"login"}}, &out)
 	return out.Login, err
-}
-
-func (c *Client) do(ctx context.Context, method, path string, q url.Values, in, out any) error {
-	attempt := func() error { return c.doOnce(ctx, method, path, q, in, out) }
-	if method == http.MethodGet {
-		// GET идемпотентен — осечки сети и 429/5xx повторяем. POST (команды) не трогаем.
-		return req.Do(ctx, attempt)
-	}
-	return attempt()
-}
-
-func (c *Client) doOnce(ctx context.Context, method, path string, q url.Values, in, out any) error {
-	u := c.base + path
-	if len(q) > 0 {
-		u += "?" + q.Encode()
-	}
-
-	var body io.Reader
-	if in != nil {
-		data, err := json.Marshal(in)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(data)
-	}
-
-	r, err := http.NewRequestWithContext(ctx, method, u, body)
-	if err != nil {
-		return err
-	}
-	r.Header.Set("Authorization", "Bearer "+c.token)
-	r.Header.Set("Accept", "application/json")
-	if in != nil {
-		r.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := c.http.Do(r)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return &req.StatusError{
-			Code:    resp.StatusCode,
-			Message: fmt.Sprintf("youtrack %s %s: %s: %s", method, path, resp.Status, msg),
-		}
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
 }

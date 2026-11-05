@@ -10,15 +10,16 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
-	"taskwatch/internal/req"
+	"taskwatch/internal/integrations/httpx"
 )
 
 func server(t *testing.T, h http.HandlerFunc) *Client {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return New(srv.URL+"/", "perm:tok")
+	return New(srv.URL+"/", "perm:tok", httpx.WithRetryDelays(time.Millisecond, time.Millisecond))
 }
 
 func TestIssues(t *testing.T) {
@@ -70,7 +71,7 @@ func TestCommandIsPostedOnceWithoutRetry(t *testing.T) {
 		http.Error(w, "busy", http.StatusServiceUnavailable)
 	})
 	err := c.Command(context.Background(), "ABC-1", "State Ready for QA")
-	var se *req.StatusError
+	var se *httpx.StatusError
 	if !errors.As(err, &se) || se.Code != 503 || !strings.Contains(se.Message, "youtrack POST /api/commands") {
 		t.Errorf("err = %v", err)
 	}

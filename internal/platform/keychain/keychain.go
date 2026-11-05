@@ -42,7 +42,14 @@ const (
 // привязан к подписи создателя, чужую подпись пускает только через промпт.
 // Лечение — ввести токен заново в настройках: Save пересоздаст запись от
 // текущей сборки.
-var ErrAccessDenied = errors.New("запись создана другой сборкой приложения")
+var ErrAccessDenied = errors.New("запись создана другой сборкой приложения — введи токен заново в настройках")
+
+// Store — Связка ключей как хранилище секретов: Get/Set/Delete поверх Load/Save/Delete.
+type Store struct{}
+
+func (Store) Get(account string) (string, error) { return Load(account) }
+func (Store) Set(account, secret string) error   { return Save(account, secret) }
+func (Store) Delete(account string) error        { return Delete(account) }
 
 // Save создаёт запись (service, account) → secret, существующую обновляет.
 // Запись принадлежит нашему бинарю: чужие приложения без разрешения прочитать

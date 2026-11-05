@@ -1,7 +1,6 @@
 package gui
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,14 +10,14 @@ import (
 	"taskwatch/internal/config"
 	"taskwatch/internal/domain"
 	"taskwatch/internal/engine"
-	"taskwatch/internal/gitlab"
-	"taskwatch/internal/keychain"
+	"taskwatch/internal/integrations/gitlab"
+	"taskwatch/internal/integrations/youtrack"
+	"taskwatch/internal/settings"
 	"taskwatch/internal/view"
 	"taskwatch/internal/watch"
-	"taskwatch/internal/youtrack"
 )
 
-func newHandler(eng *engine.Engine, configPath string, assets http.Handler, openURL func(string) error) http.Handler {
+func newHandler(eng *engine.Engine, svc *settings.Service, assets http.Handler, openURL func(string) error) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/view", func(w http.ResponseWriter, r *http.Request) {
@@ -117,31 +116,19 @@ func newHandler(eng *engine.Engine, configPath string, assets http.Handler, open
 
 	// GET /api/config — текущие настройки для формы. Токены не отдаём, только tokenSet.
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, configView(eng.Config(), configPath))
+		writeJSON(w, http.StatusOK, configView(eng.Config(), svc.Path()))
 	})
 
 	// POST /api/config — валидируем, новый токен прячем в Связку ключей,
 	// в config.yaml пишем настройки без токенов и перезаряжаем движок на лету.
 	mux.HandleFunc("POST /api/config", func(w http.ResponseWriter, r *http.Request) {
 		cur := eng.Config()
-		cfg, err := decodeConfig(r, cur, configPath)
+		cfg, err := formConfig(r, cur, svc.Path())
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		// Изменившийся токен из формы — в хранилище; yaml токенов не содержит.
-		for _, s := range []struct{ account, to, was string }{
-			{"gitlab", cfg.GitLab.Token, cur.GitLab.Token},
-			{"youtrack", cfg.YouTrack.Token, cur.YouTrack.Token},
-		} {
-			if s.to != "" && s.to != s.was {
-				if err := keychain.Save(s.account, s.to); err != nil {
-					writeError(w, http.StatusInternalServerError, "store token: "+err.Error())
-					return
-				}
-			}
-		}
-		if err := config.Save(configPath, cfg); err != nil {
+		if err := svc.Save(cur, cfg); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -153,27 +140,13 @@ func newHandler(eng *engine.Engine, configPath string, assets http.Handler, open
 
 	// POST /api/config/test — проверить связь с теми значениями, что сейчас в форме.
 	mux.HandleFunc("POST /api/config/test", func(w http.ResponseWriter, r *http.Request) {
-		cfg, err := decodeConfig(r, eng.Config(), configPath)
+		cfg, err := formConfig(r, eng.Config(), svc.Path())
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		var glRes, ytRes probe
-		if cfg.GitLabOK() {
-			gl := gitlab.New(cfg.GitLab.URL, cfg.GitLab.Token)
-			glRes = runProbe(func(ctx context.Context) (string, error) {
-				u, err := gl.CurrentUser(ctx)
-				return u.Username, err
-			})(r.Context())
-		} else {
-			glRes = probe{Skipped: true}
-		}
-		if cfg.YouTrackOK() {
-			ytRes = runProbe(youtrack.New(cfg.YouTrack.URL, cfg.YouTrack.Token).CurrentUser)(r.Context())
-		} else {
-			ytRes = probe{Skipped: true}
-		}
-		writeJSON(w, http.StatusOK, map[string]probe{"gitlab": glRes, "youtrack": ytRes})
+		gl, yt := settings.Test(r.Context(), cfg)
+		writeJSON(w, http.StatusOK, map[string]probe{"gitlab": probeView(gl), "youtrack": probeView(yt)})
 	})
 
 	mux.Handle("/", assets)
@@ -188,13 +161,14 @@ type probe struct {
 	Skipped bool   `json:"skipped,omitempty"` // сервис не заполнен — проверять нечего
 }
 
-func runProbe(fn func(context.Context) (string, error)) func(context.Context) probe {
-	return func(ctx context.Context) probe {
-		user, err := fn(ctx)
-		if err != nil {
-			return probe{Error: err.Error()}
-		}
-		return probe{OK: true, User: user}
+func probeView(p settings.Probe) probe {
+	switch {
+	case p.Skipped:
+		return probe{Skipped: true}
+	case p.Err != nil:
+		return probe{Error: p.Err.Error()}
+	default:
+		return probe{OK: true, User: p.User}
 	}
 }
 
@@ -268,8 +242,20 @@ func configView(cfg *config.Config, path string) configForm {
 	}
 }
 
-// decodeConfig собирает конфиг из формы. Пустой токен значит «оставить прежний» —
-// GET /api/config токены не отдаёт.
+// formConfig собирает конфиг из формы и готовит его к сохранению (settings.Resolve:
+// прежние токены, проверка).
+func formConfig(r *http.Request, cur *config.Config, path string) (*config.Config, error) {
+	cfg, err := decodeConfig(r, cur, path)
+	if err != nil {
+		return nil, err
+	}
+	if err := settings.Resolve(cur, cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// decodeConfig переводит форму в конфиг как есть: токены — только введённые.
 func decodeConfig(r *http.Request, cur *config.Config, path string) (*config.Config, error) {
 	var in configForm
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -288,18 +274,12 @@ func decodeConfig(r *http.Request, cur *config.Config, path string) (*config.Con
 
 	cfg.GitLab.URL = strings.TrimSpace(in.GitLab.URL)
 	cfg.GitLab.Username = strings.TrimSpace(in.GitLab.Username)
-	cfg.GitLab.Token = in.GitLab.Token
-	if cfg.GitLab.Token == "" {
-		cfg.GitLab.Token = cur.GitLab.Token
-	}
+	cfg.GitLab.Token = strings.TrimSpace(in.GitLab.Token)
 
 	cfg.YouTrack.URL = strings.TrimSpace(in.YouTrack.URL)
 	cfg.YouTrack.Login = strings.TrimSpace(in.YouTrack.Login)
 	cfg.YouTrack.Query = strings.TrimSpace(in.YouTrack.Query)
-	cfg.YouTrack.Token = in.YouTrack.Token
-	if cfg.YouTrack.Token == "" {
-		cfg.YouTrack.Token = cur.YouTrack.Token
-	}
+	cfg.YouTrack.Token = strings.TrimSpace(in.YouTrack.Token)
 
 	cfg.Rules.RequiredApprovals = in.Rules.RequiredApprovals
 	cfg.Rules.MRBehindCommits = in.Rules.MRBehindCommits
@@ -316,9 +296,6 @@ func decodeConfig(r *http.Request, cur *config.Config, path string) (*config.Con
 		cfg.Rules.MRLookback = d
 	}
 
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
 	return cfg, nil
 }
 

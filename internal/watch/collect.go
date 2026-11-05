@@ -9,8 +9,8 @@ import (
 
 	"taskwatch/internal/config"
 	"taskwatch/internal/domain"
-	"taskwatch/internal/gitlab"
-	"taskwatch/internal/youtrack"
+	"taskwatch/internal/integrations/gitlab"
+	"taskwatch/internal/integrations/youtrack"
 )
 
 type Collector struct {

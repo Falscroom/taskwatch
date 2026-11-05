@@ -1,25 +1,12 @@
 package config
 
 import (
-	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
-
-func TestMain(m *testing.M) {
-	log.SetOutput(io.Discard)
-	os.Exit(m.Run())
-}
-
-// withEnvTokens задаёт оба env-токена: тогда Load не ходит в настоящую Связку ключей.
-func withEnvTokens(t *testing.T) {
-	t.Setenv("TASKWATCH_GITLAB_TOKEN", "gl-env")
-	t.Setenv("TASKWATCH_YOUTRACK_TOKEN", "yt-env")
-}
 
 func writeYAML(t *testing.T, body string) string {
 	t.Helper()
@@ -47,7 +34,7 @@ rules:
 
 func TestDefault(t *testing.T) {
 	c := Default("/x/y/config.yaml")
-	if c.PollInterval != 2*time.Minute || c.StatePath != "/x/y/state.json" ||
+	if c.PollInterval != DefaultPollInterval || c.StatePath != "/x/y/state.json" ||
 		c.Rules.RequiredApprovals != 2 || c.Rules.ReleaseBranchPrefix != "release/" ||
 		c.Rules.MRLookback != 14*24*time.Hour || c.Configured() {
 		t.Errorf("default = %+v", c)
@@ -58,13 +45,12 @@ func TestDefault(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
-	withEnvTokens(t)
 	path := writeYAML(t, fullYAML)
 	c, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.PollInterval != 5*time.Minute || c.GitLab.Token != "gl-env" || c.YouTrack.Token != "yt-env" ||
+	if c.PollInterval != 5*time.Minute || c.GitLab.URL != "https://gitlab.example.com" ||
 		c.Rules.RequiredApprovals != 3 || c.Rules.MRBehindCommits != 7 {
 		t.Errorf("loaded = %+v", c)
 	}
@@ -73,31 +59,25 @@ func TestLoad(t *testing.T) {
 		c.StatePath != filepath.Join(filepath.Dir(path), "state.json") {
 		t.Errorf("defaults not merged: %+v", c)
 	}
-	if !c.GitLabOK() || !c.YouTrackOK() || !c.Configured() {
-		t.Error("both services must be OK")
+	// Токенов в файле нет — сервисы ещё не готовы, но Load не валидирует.
+	if c.GitLab.Token != "" || c.Configured() {
+		t.Errorf("tokens = %q", c.GitLab.Token)
+	}
+}
+
+func TestLoadLegacyToken(t *testing.T) {
+	c, err := Load(writeYAML(t, "gitlab:\n  token: glpat-old\n"))
+	if err != nil || c.GitLab.Token != "glpat-old" {
+		t.Errorf("legacy token = %q, %v", c.GitLab.Token, err)
 	}
 }
 
 func TestLoadErrors(t *testing.T) {
-	withEnvTokens(t)
 	if _, err := Load(filepath.Join(t.TempDir(), "missing.yaml")); err == nil || !strings.Contains(err.Error(), "read config") {
 		t.Errorf("missing: %v", err)
 	}
 	if _, err := Load(writeYAML(t, "gitlab: [")); err == nil || !strings.Contains(err.Error(), "parse config") {
 		t.Errorf("broken yaml: %v", err)
-	}
-}
-
-// Load отдаёт конфиг даже вместе с ошибкой валидации. Env-токен для
-// незаполненного сервиса делает его «половинчатым».
-func TestLoadValidationErrorKeepsConfig(t *testing.T) {
-	withEnvTokens(t)
-	c, err := Load(writeYAML(t, "gitlab:\n  url: https://gl\n  username: me\n"))
-	if c == nil || c.GitLab.URL != "https://gl" {
-		t.Fatalf("config = %+v", c)
-	}
-	if err == nil || !strings.Contains(err.Error(), "youtrack.url is required") {
-		t.Errorf("err = %v", err)
 	}
 }
 
@@ -162,7 +142,7 @@ func TestSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(data)
-	if strings.Contains(s, "secret") {
+	if strings.Contains(s, "secret") || strings.Contains(s, "token") {
 		t.Errorf("token written to yaml:\n%s", s)
 	}
 	if strings.Contains(s, "state_path") {
@@ -180,16 +160,12 @@ func TestSave(t *testing.T) {
 	if err := Save(path, c); err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "state_path: /custom/state.json") {
-		t.Errorf("custom state_path lost:\n%s", data)
-	}
-
-	withEnvTokens(t)
 	back, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back.GitLab.URL != "https://gl" || back.StatePath != "/custom/state.json" || back.PollInterval != c.PollInterval {
+	if back.GitLab.URL != "https://gl" || back.StatePath != "/custom/state.json" || back.PollInterval != c.PollInterval ||
+		back.YouTrack.Query != "for: me" || back.GitLab.Token != "" {
 		t.Errorf("roundtrip = %+v", back)
 	}
 }

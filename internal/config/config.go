@@ -1,28 +1,35 @@
+// Package config — настройки taskwatch и их yaml-файл. Без побочных эффектов:
+// токены сюда подставляет пакет settings из хранилища секретов, в файл они не пишутся.
 package config
 
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
 
-	"taskwatch/internal/domain"
-	"taskwatch/internal/keychain"
-
 	"gopkg.in/yaml.v3"
+
+	"taskwatch/internal/domain"
+	"taskwatch/internal/platform/fsutil"
 )
 
+// DefaultPollInterval — как часто опрашивать сервисы, если не задано иное.
+const DefaultPollInterval = 2 * time.Minute
+
 type GitLab struct {
-	URL      string `yaml:"url"`
-	Token    string `yaml:"token"`
+	URL string `yaml:"url"`
+	// Token живёт в памяти: его подставляет settings из хранилища секретов.
+	// В yaml он бывает только у старых версий и при загрузке оттуда переезжает.
+	Token    string `yaml:"token,omitempty"`
 	Username string `yaml:"username"`
 }
 
 type YouTrack struct {
-	URL   string `yaml:"url"`
-	Token string `yaml:"token"`
+	URL string `yaml:"url"`
+	// Token — как у GitLab: в памяти, не в файле.
+	Token string `yaml:"token,omitempty"`
 	Login string `yaml:"login"`
 	// Запрос задач, которые мониторим, например: "for: me Sprint: {Current sprint}"
 	Query string `yaml:"query"`
@@ -62,8 +69,8 @@ func DefaultPath() string {
 // Default — пустой конфиг с дефолтными правилами; state.json лежит рядом с config-файлом.
 func Default(path string) *Config {
 	return &Config{
-		PollInterval: 2 * time.Minute,
-		StatePath:    filepath.Join(filepath.Dir(path), "state.json"),
+		PollInterval: DefaultPollInterval,
+		StatePath:    defaultStatePath(path),
 		Rules: Rules{
 			RequiredApprovals:   2,
 			ReleaseBranchPrefix: "release/",
@@ -72,102 +79,37 @@ func Default(path string) *Config {
 	}
 }
 
-// Load читает yaml; токены берутся из Связки ключей (или TASKWATCH_*_TOKEN,
-// они главнее — удобно для тестов). Открытые токены в yaml — наследие старых
-// версий: при первом запуске переезжают в хранилище, из файла затираются.
+func defaultStatePath(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "state.json")
+}
+
+// Load читает yaml поверх дефолтов. Не валидирует: без токенов из хранилища
+// секретов конфиг ещё неполон — это делает settings.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-
 	cfg := Default(path)
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-
-	// Миграция: открытый токен в yaml → Связка ключей, из файла прочерк.
-	// Хранилище недоступно — оставляем как есть: лучше открытый токен, чем
-	// отвалившийся монитор.
-	migrated := false
-	for account, token := range map[string]*string{
-		"gitlab":   &cfg.GitLab.Token,
-		"youtrack": &cfg.YouTrack.Token,
-	} {
-		if *token == "" {
-			continue
-		}
-		if err := keychain.Save(account, *token); err != nil {
-			log.Printf("config: не смог спрятать токен %s в связку ключей (%v) — оставил в yaml", account, err)
-			continue
-		}
-		*token = ""
-		migrated = true
-		log.Printf("config: токен %s перенесён из config.yaml в связку ключей", account)
-	}
-	if migrated {
-		if err := Save(path, cfg); err != nil {
-			// Не критично: при следующем запуске миграция повторится тем же значением.
-			log.Printf("config: токены спрятаны, но yaml не перезаписан: %v", err)
-		}
-	}
-
-	// Токены достаём из хранилища; env-переменные главнее — когда они заданы,
-	// хранилище не читаем вовсе: экономим время и не провоцируем лишние вопросы.
-	for _, s := range []struct {
-		name, env string
-		dst       *string
-	}{
-		{"gitlab", "TASKWATCH_GITLAB_TOKEN", &cfg.GitLab.Token},
-		{"youtrack", "TASKWATCH_YOUTRACK_TOKEN", &cfg.YouTrack.Token},
-	} {
-		if *s.dst != "" || os.Getenv(s.env) != "" {
-			continue
-		}
-		v, err := keychain.Load(s.name)
-		switch {
-		case errors.Is(err, keychain.ErrAccessDenied):
-			// Запись осталась от предыдущей сборки: строгий ACL пускает к ней
-			// только её создателя. Подсказываем лечение вместо сырого osstatus.
-			log.Printf("config: токен %s есть в связке ключей, но недоступен этой сборке — введи его заново в настройках", s.name)
-		case err != nil:
-			log.Printf("config: не смог прочитать токен %s из связки ключей: %v", s.name, err)
-		default:
-			*s.dst = v
-		}
-	}
-
-	if v := os.Getenv("TASKWATCH_GITLAB_TOKEN"); v != "" {
-		cfg.GitLab.Token = v
-	}
-	if v := os.Getenv("TASKWATCH_YOUTRACK_TOKEN"); v != "" {
-		cfg.YouTrack.Token = v
-	}
-
-	return cfg, cfg.Validate()
+	return cfg, nil
 }
 
-// Save пишет конфиг в yaml с правами 0600. Токены в yaml не попадают никогда —
-// они живут в Связке ключей.
+// Save пишет конфиг в yaml с правами 0600. Токены в yaml не попадают никогда.
 func Save(path string, cfg *Config) error {
 	out := *cfg
 	out.GitLab.Token = ""
 	out.YouTrack.Token = ""
-	if out.StatePath == filepath.Join(filepath.Dir(path), "state.json") {
+	if out.StatePath == defaultStatePath(path) {
 		out.StatePath = "" // дефолт не пишем, чтобы файл не пух путями
 	}
 	data, err := yaml.Marshal(&out)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fsutil.WriteFileAtomic(path, data, 0o600)
 }
 
 // Policy — правила и «кто я» в виде, в котором их понимает домен.

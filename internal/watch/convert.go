@@ -2,8 +2,8 @@ package watch
 
 import (
 	"taskwatch/internal/domain"
-	"taskwatch/internal/gitlab"
-	"taskwatch/internal/youtrack"
+	"taskwatch/internal/integrations/gitlab"
+	"taskwatch/internal/integrations/youtrack"
 )
 
 // Перевод ответов GitLab и YouTrack в доменную модель.

@@ -31,7 +31,8 @@ taskwatch [-config path] [-addr host:port] <command>
 ```
 
 Конфиг — `~/.config/taskwatch/config.yaml` (без токенов), токены — в Связке ключей
-(сервис `com.taskwatch`) или в `TASKWATCH_GITLAB_TOKEN` / `TASKWATCH_YOUTRACK_TOKEN`.
+(сервис `com.taskwatch`) или в `TASKWATCH_GITLAB_TOKEN` / `TASKWATCH_YOUTRACK_TOKEN`
+(env главнее Связки ключей). Режим `web` отвечает только на loopback-адреса.
 Рядом с конфигом — `state.json` (отправленные уведомления, заглушения) и лог.
 
 ## Раскладка
@@ -44,6 +45,12 @@ internal/          весь код приложения
   rules/           события для уведомлений
   view/            карточки окна
   engine/          цикл опроса, дедуп и отправка уведомлений
+  config/          структура настроек и yaml, без побочных эффектов
+  settings/        загрузка конфига с токенами, сохранение формы, проверка связи
+  integrations/    клиенты GitLab и YouTrack поверх общего httpx (JSON, ретраи)
+  platform/        macOS: Связка ключей, уведомления; атомарная запись файлов
+  gui/             меню-бар (Wails) и HTTP API окна
   gui/frontend/    окно: HTML/CSS/JS без сборщика, встраивается в бинарь
+  testutil/        поддельные GitLab/YouTrack и хранилище секретов для тестов
 packaging/         install.sh, uninstall.sh, plist LaunchAgent, README для коллег
 ```

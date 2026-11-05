@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"taskwatch/internal/req"
+	"taskwatch/internal/integrations/httpx"
 )
 
 func server(t *testing.T, h http.HandlerFunc) *Client {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return New(srv.URL+"/", "tok")
+	return New(srv.URL+"/", "tok", httpx.WithRetryDelays(time.Millisecond, time.Millisecond))
 }
 
 func TestRequestShape(t *testing.T) {
@@ -111,7 +111,7 @@ func TestStatusError(t *testing.T) {
 		http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
 	})
 	_, err := c.CurrentUser(context.Background())
-	var se *req.StatusError
+	var se *httpx.StatusError
 	if !errors.As(err, &se) || se.Code != 401 || !strings.Contains(se.Message, "gitlab GET /user") {
 		t.Errorf("err = %#v", err)
 	}

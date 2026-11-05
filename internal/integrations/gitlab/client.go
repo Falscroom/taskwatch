@@ -1,31 +1,26 @@
+// Package gitlab — клиент нужной части GitLab REST API v4.
 package gitlab
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
-	"taskwatch/internal/req"
+	"taskwatch/internal/integrations/httpx"
 )
 
 type Client struct {
-	base  string
-	token string
-	http  *http.Client
+	api *httpx.Client
 }
 
-func New(baseURL, token string) *Client {
-	return &Client{
-		base:  strings.TrimRight(baseURL, "/") + "/api/v4",
-		token: token,
-		http:  &http.Client{Timeout: 30 * time.Second},
-	}
+// New — клиент GitLab REST API v4; opts — для тестов (паузы повторов).
+func New(baseURL, token string, opts ...httpx.Option) *Client {
+	auth := func(r *http.Request) { r.Header.Set("PRIVATE-TOKEN", token) }
+	return &Client{api: httpx.New("gitlab", strings.TrimRight(baseURL, "/")+"/api/v4", auth, opts...)}
 }
 
 type User struct {
@@ -108,7 +103,7 @@ func (c *Client) MyMergeRequests(ctx context.Context, username string, since tim
 		"per_page":        {"100"},
 	}
 	var out []MergeRequest
-	return out, c.get(ctx, "/merge_requests", q, &out)
+	return out, c.api.Get(ctx, "/merge_requests", q, &out)
 }
 
 func (c *Client) ReviewRequests(ctx context.Context, username string) ([]MergeRequest, error) {
@@ -119,37 +114,37 @@ func (c *Client) ReviewRequests(ctx context.Context, username string) ([]MergeRe
 		"per_page":          {"100"},
 	}
 	var out []MergeRequest
-	return out, c.get(ctx, "/merge_requests", q, &out)
+	return out, c.api.Get(ctx, "/merge_requests", q, &out)
 }
 
 // MergeRequest возвращает MR с head_pipeline и diverged_commits_count, которых нет в списке.
 func (c *Client) MergeRequest(ctx context.Context, projectID, iid int) (MergeRequest, error) {
 	q := url.Values{"include_diverged_commits_count": {"true"}}
 	var out MergeRequest
-	return out, c.get(ctx, fmt.Sprintf("/projects/%d/merge_requests/%d", projectID, iid), q, &out)
+	return out, c.api.Get(ctx, fmt.Sprintf("/projects/%d/merge_requests/%d", projectID, iid), q, &out)
 }
 
 func (c *Client) Approvals(ctx context.Context, projectID, iid int) (Approvals, error) {
 	var out Approvals
-	return out, c.get(ctx, fmt.Sprintf("/projects/%d/merge_requests/%d/approvals", projectID, iid), nil, &out)
+	return out, c.api.Get(ctx, fmt.Sprintf("/projects/%d/merge_requests/%d/approvals", projectID, iid), nil, &out)
 }
 
 func (c *Client) Reviewers(ctx context.Context, projectID, iid int) ([]Reviewer, error) {
 	var out []Reviewer
-	return out, c.get(ctx, fmt.Sprintf("/projects/%d/merge_requests/%d/reviewers", projectID, iid), nil, &out)
+	return out, c.api.Get(ctx, fmt.Sprintf("/projects/%d/merge_requests/%d/reviewers", projectID, iid), nil, &out)
 }
 
 func (c *Client) Notes(ctx context.Context, projectID, iid int) ([]Note, error) {
 	q := url.Values{"sort": {"desc"}, "order_by": {"created_at"}, "per_page": {"50"}}
 	var out []Note
-	return out, c.get(ctx, fmt.Sprintf("/projects/%d/merge_requests/%d/notes", projectID, iid), q, &out)
+	return out, c.api.Get(ctx, fmt.Sprintf("/projects/%d/merge_requests/%d/notes", projectID, iid), q, &out)
 }
 
 // CommitBranches — ветки, в которых есть коммит.
 func (c *Client) CommitBranches(ctx context.Context, projectID int, sha string) ([]string, error) {
 	q := url.Values{"type": {"branch"}, "per_page": {"100"}}
 	var refs []ref
-	if err := c.get(ctx, fmt.Sprintf("/projects/%d/repository/commits/%s/refs", projectID, sha), q, &refs); err != nil {
+	if err := c.api.Get(ctx, fmt.Sprintf("/projects/%d/repository/commits/%s/refs", projectID, sha), q, &refs); err != nil {
 		return nil, err
 	}
 	names := make([]string, 0, len(refs))
@@ -162,39 +157,7 @@ func (c *Client) CommitBranches(ctx context.Context, projectID int, sha string) 
 // CurrentUser проверяет токен и возвращает его владельца.
 func (c *Client) CurrentUser(ctx context.Context) (User, error) {
 	var out User
-	return out, c.get(ctx, "/user", nil, &out)
-}
-
-func (c *Client) get(ctx context.Context, path string, q url.Values, out any) error {
-	// GET идемпотентен — осечки сети и 429/5xx повторяем.
-	return req.Do(ctx, func() error { return c.getOnce(ctx, path, q, out) })
-}
-
-func (c *Client) getOnce(ctx context.Context, path string, q url.Values, out any) error {
-	u := c.base + path
-	if len(q) > 0 {
-		u += "?" + q.Encode()
-	}
-	r, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return err
-	}
-	r.Header.Set("PRIVATE-TOKEN", c.token)
-
-	resp, err := c.http.Do(r)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return &req.StatusError{
-			Code:    resp.StatusCode,
-			Message: fmt.Sprintf("gitlab GET %s: %s: %s", path, resp.Status, body),
-		}
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return out, c.api.Get(ctx, "/user", nil, &out)
 }
 
 func MRRef(mr MergeRequest) string {

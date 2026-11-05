@@ -1,4 +1,4 @@
-package req
+package httpx
 
 import (
 	"context"
@@ -47,33 +47,43 @@ func TestRetryable(t *testing.T) {
 	}
 }
 
-func TestDoStopsOnSuccessAndPermanentErrors(t *testing.T) {
+var fast = []time.Duration{time.Millisecond, time.Millisecond}
+
+func TestRetryStopsOnSuccessAndPermanentErrors(t *testing.T) {
 	calls := 0
-	if err := Do(context.Background(), func() error { calls++; return nil }); err != nil || calls != 1 {
+	if err := retry(context.Background(), fast, func() error { calls++; return nil }); err != nil || calls != 1 {
 		t.Errorf("success: err=%v calls=%d", err, calls)
 	}
 	calls = 0
 	permanent := &StatusError{Code: 404, Message: "nope"}
-	if err := Do(context.Background(), func() error { calls++; return permanent }); !errors.Is(err, permanent) || calls != 1 {
+	if err := retry(context.Background(), fast, func() error { calls++; return permanent }); !errors.Is(err, permanent) || calls != 1 {
 		t.Errorf("permanent: err=%v calls=%d", err, calls)
 	}
 }
 
-func TestDoRetriesThreeTimes(t *testing.T) {
+func TestRetryGivesUpAfterAllDelays(t *testing.T) {
 	calls := 0
-	started := time.Now()
-	err := Do(context.Background(), func() error { calls++; return &StatusError{Code: 503, Message: "busy"} })
+	err := retry(context.Background(), fast, func() error { calls++; return &StatusError{Code: 503, Message: "busy"} })
 	if calls != 3 || err == nil || err.Error() != "busy" {
 		t.Errorf("err=%v calls=%d", err, calls)
+	}
+}
+
+func TestDefaultBackoff(t *testing.T) {
+	calls := 0
+	started := time.Now()
+	_ = retry(context.Background(), defaultDelays, func() error { calls++; return io.EOF })
+	if calls != 3 {
+		t.Errorf("calls = %d, want 3", calls)
 	}
 	if d := time.Since(started); d < 1400*time.Millisecond {
 		t.Errorf("backoff too short: %v (want 500ms + 1s)", d)
 	}
 }
 
-func TestDoRecoversAfterRetry(t *testing.T) {
+func TestRetryRecovers(t *testing.T) {
 	calls := 0
-	err := Do(context.Background(), func() error {
+	err := retry(context.Background(), fast, func() error {
 		calls++
 		if calls == 1 {
 			return io.EOF
@@ -85,15 +95,23 @@ func TestDoRecoversAfterRetry(t *testing.T) {
 	}
 }
 
-func TestDoCanceledDuringBackoff(t *testing.T) {
+func TestRetryCanceledDuringBackoff(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0
-	err := Do(ctx, func() error {
+	err := retry(ctx, []time.Duration{time.Hour}, func() error {
 		calls++
 		cancel()
 		return io.EOF
 	})
 	if !errors.Is(err, context.Canceled) || calls != 1 {
 		t.Errorf("err=%v calls=%d", err, calls)
+	}
+}
+
+func TestNoDelaysNoRetries(t *testing.T) {
+	calls := 0
+	_ = retry(context.Background(), nil, func() error { calls++; return io.EOF })
+	if calls != 1 {
+		t.Errorf("calls = %d", calls)
 	}
 }

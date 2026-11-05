@@ -5,17 +5,19 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"taskwatch/internal/config"
-	"taskwatch/internal/gitlab"
+	"taskwatch/internal/integrations/gitlab"
+	"taskwatch/internal/integrations/youtrack"
 	"taskwatch/internal/state"
 	"taskwatch/internal/testutil/fakeapi"
 	"taskwatch/internal/watch"
-	"taskwatch/internal/youtrack"
 )
 
 func TestMain(m *testing.M) {
@@ -29,15 +31,24 @@ type harness struct {
 	eng     *Engine
 	store   *state.Store
 	updates int
+
+	sent       []sent // отправленные уведомления
+	failNotify bool   // уведомления не отправляются
 }
 
-// newHarness собирает движок на поддельных GitLab/YouTrack. PATH пустой, поэтому
-// notify.Send не находит ни terminal-notifier, ни osascript и падает: настоящих
-// уведомлений тесты не шлют, а «попытку отправить» видно по тому, что событие
-// осталось непомеченным.
+type sent struct{ title, message, url, key string }
+
+func (h *harness) sentKeys() []string {
+	var keys []string
+	for _, s := range h.sent {
+		keys = append(keys, s.key)
+	}
+	return keys
+}
+
+// newHarness собирает движок на поддельных GitLab/YouTrack с записывающим notifier.
 func newHarness(t *testing.T, youtrackOn bool, mutate func(*config.Config)) *harness {
 	t.Helper()
-	t.Setenv("PATH", "")
 	srv := fakeapi.New(t)
 	cfg := config.Default(filepath.Join(t.TempDir(), "config.yaml"))
 	cfg.GitLab = config.GitLab{URL: srv.URL, Token: "gl", Username: "me"}
@@ -58,7 +69,13 @@ func newHarnessWith(t *testing.T, srv *fakeapi.Server, cfg *config.Config, store
 	h := &harness{srv: srv, cfg: cfg, store: store}
 	gl := gitlab.New(cfg.GitLab.URL, cfg.GitLab.Token)
 	yt := youtrack.New(cfg.YouTrack.URL, cfg.YouTrack.Token)
-	h.eng = New(cfg, watch.NewCollector(cfg, gl, yt), store, yt)
+	h.eng = New(cfg, watch.NewCollector(cfg, gl, yt), store, yt, func(title, message, url, key string) error {
+		if h.failNotify {
+			return errors.New("notification center is unavailable")
+		}
+		h.sent = append(h.sent, sent{title, message, url, key})
+		return nil
+	})
 	h.eng.OnUpdate = func() { h.updates++ }
 	return h
 }
@@ -115,10 +132,8 @@ func TestFirstRunRemembersWithoutNotifying(t *testing.T) {
 		t.Fatal("store must start fresh")
 	}
 	h.tick(t)
-	// notify.Send упал бы (PATH пуст) и событие осталось бы непомеченным —
-	// значит, на первом запуске отправки не было.
-	if !h.store.Seen("gl-note:1") {
-		t.Error("first run must mark events without sending")
+	if !h.store.Seen("gl-note:1") || len(h.sent) != 0 {
+		t.Errorf("first run must mark events without sending; sent = %v", h.sent)
 	}
 	if h.store.Fresh() {
 		t.Error("store still fresh after first tick")
@@ -141,9 +156,22 @@ func TestFailedNotificationIsRetried(t *testing.T) {
 	h.tick(t) // seed
 	m.Notes = []gitlab.Note{note(2, "bob")}
 	h.srv.SetMine(m)
+	h.failNotify = true
 	h.tick(t)
 	if h.store.Seen("gl-note:2") {
 		t.Error("failed notification must not be marked as seen")
+	}
+	h.failNotify = false
+	h.tick(t)
+	if !h.store.Seen("gl-note:2") || len(h.sent) != 1 {
+		t.Errorf("retry: sent = %v", h.sent)
+	}
+	if s := h.sent[0]; s.title != "Комментарий в MR a от bob" || s.message != "text" || s.url != "" || s.key != "gl-note:2" {
+		t.Errorf("notification = %+v", s)
+	}
+	h.tick(t)
+	if len(h.sent) != 1 {
+		t.Errorf("event sent twice: %v", h.sent)
 	}
 }
 
@@ -153,8 +181,8 @@ func TestTaskEventsAreNotified(t *testing.T) {
 	h.tick(t) // seed
 	h.srv.SetIssues(fakeapi.Issue{Issue: youtrack.Issue{ID: "ABC-1", CustomFields: []youtrack.CustomField{fakeapi.State("Done")}}})
 	h.tick(t)
-	if !h.store.Seen("yt-state:ABC-1:Open") || h.store.Seen("yt-state:ABC-1:Done") {
-		t.Error("task state change must be sent (and stay unmarked when sending fails)")
+	if keys := h.sentKeys(); len(keys) != 1 || keys[0] != "yt-state:ABC-1:Done" {
+		t.Errorf("sent = %v", keys)
 	}
 }
 
@@ -179,8 +207,8 @@ func TestMutedMREventsAreMarkedSilently(t *testing.T) {
 	if !h.store.Seen("gl-note:1") || !h.store.Seen("gl-note:2") {
 		t.Error("events of muted MRs must be marked without sending")
 	}
-	if h.store.Seen("gl-note:3") {
-		t.Error("event of a loud MR was not sent (would be marked only after sending)")
+	if keys := h.sentKeys(); len(keys) != 1 || keys[0] != "gl-note:3" {
+		t.Errorf("sent = %v, want only the loud MR", keys)
 	}
 }
 
@@ -320,6 +348,25 @@ func TestAutoTransition(t *testing.T) {
 	if len(cmds) != 1 || cmds[0] != (fakeapi.Command{Query: "State Ready for QA", IssueID: "ABC-1"}) {
 		t.Errorf("commands = %+v", cmds)
 	}
+	if len(h.sent) != 1 || h.sent[0].key != "approved:101" || h.sent[0].message != "Переведена: State Ready for QA" {
+		t.Errorf("sent = %+v", h.sent)
+	}
+}
+
+func TestAutoTransitionFailureIsReported(t *testing.T) {
+	h := newHarness(t, true, func(c *config.Config) {
+		c.Rules.ReviewState = "Code Review"
+		c.Rules.NextCommand = "State Ready for QA"
+		c.Rules.AutoTransition = true
+	})
+	taskWithApprovedMR(h.srv)
+	h.tick(t)
+	taskWithApprovedMR(h.srv, "bob", "eve")
+	h.srv.FailCommands(http.StatusForbidden)
+	h.tick(t)
+	if len(h.sent) != 1 || !strings.HasPrefix(h.sent[0].message, "Не удалось перевести автоматически:") {
+		t.Errorf("sent = %+v", h.sent)
+	}
 }
 
 func TestNoAutoTransitionOnSeedOrWhenDisabled(t *testing.T) {
@@ -389,5 +436,19 @@ func TestRunStopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not stop")
+	}
+}
+
+func TestPollInterval(t *testing.T) {
+	cfg := config.Default("/x/config.yaml")
+	cfg.PollInterval = 5 * time.Minute
+	if got := pollInterval(cfg); got != 5*time.Minute {
+		t.Errorf("pollInterval = %v", got)
+	}
+	for _, bad := range []time.Duration{0, -time.Second} {
+		cfg.PollInterval = bad
+		if got := pollInterval(cfg); got != config.DefaultPollInterval {
+			t.Errorf("pollInterval(%v) = %v, want default", bad, got)
+		}
 	}
 }

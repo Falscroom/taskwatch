@@ -12,8 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	"taskwatch/internal/gitlab"
-	"taskwatch/internal/youtrack"
+	"taskwatch/internal/integrations/gitlab"
+	"taskwatch/internal/integrations/youtrack"
 )
 
 // MR — merge request вместе со всем, что GitLab отдаёт по нему отдельными запросами.
@@ -48,6 +48,7 @@ type Server struct {
 	requests []string
 	commands []Command
 	failCode int
+	cmdFail  int
 
 	GitLabUser    string
 	YouTrackLogin string
@@ -72,6 +73,9 @@ func (s *Server) SetIssues(issues ...Issue) { s.mu.Lock(); s.issues = issues; s.
 
 // FailWith заставляет все запросы отвечать этим статусом; 0 — снова отвечать нормально.
 func (s *Server) FailWith(code int) { s.mu.Lock(); s.failCode = code; s.mu.Unlock() }
+
+// FailCommands заставляет POST /api/commands отвечать этим статусом; 0 — принимать.
+func (s *Server) FailCommands(code int) { s.mu.Lock(); s.cmdFail = code; s.mu.Unlock() }
 
 // Requests — запросы в порядке поступления: "GET /api/v4/user?…".
 func (s *Server) Requests() []string {
@@ -175,6 +179,13 @@ func (s *Server) routes() http.Handler {
 		http.NotFound(w, r)
 	})
 	mux.HandleFunc("POST /api/commands", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		code := s.cmdFail
+		s.mu.Unlock()
+		if code != 0 {
+			http.Error(w, "command rejected", code)
+			return
+		}
 		var in struct {
 			Query  string `json:"query"`
 			Issues []struct {

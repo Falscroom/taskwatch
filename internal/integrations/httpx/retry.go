@@ -1,5 +1,4 @@
-// Package req — общий HTTP-клей клиентов: ретраи сетевых осечек и статусов 429/5xx.
-package req
+package httpx
 
 import (
 	"context"
@@ -11,8 +10,8 @@ import (
 	"time"
 )
 
-// attempts — всего попыток: первая + две повторных с паузами 500мс и 1с.
-const attempts = 3
+// defaultDelays — паузы перед повторами: всего три попытки, первая сразу.
+var defaultDelays = []time.Duration{500 * time.Millisecond, time.Second}
 
 // StatusError — ответ с нежелательным статусом.
 type StatusError struct {
@@ -22,17 +21,17 @@ type StatusError struct {
 
 func (e *StatusError) Error() string { return e.Message }
 
-// Do выполняет attempt до attempts раз, пока ошибка ретраебельная.
-// Для идемпотентных запросов (GET) — POST не вызывать.
-func Do(ctx context.Context, attempt func() error) error {
-	var err error
-	for i := 0; i < attempts; i++ {
-		if i > 0 && !sleep(ctx, time.Duration(i)*500*time.Millisecond) {
-			return ctx.Err()
-		}
-		if err = attempt(); err == nil || !Retryable(err) {
+// retry выполняет attempt, пока ошибка ретраебельная и не кончились паузы.
+func retry(ctx context.Context, delays []time.Duration, attempt func() error) error {
+	err := attempt()
+	for _, d := range delays {
+		if err == nil || !Retryable(err) {
 			return err
 		}
+		if !sleep(ctx, d) {
+			return ctx.Err()
+		}
+		err = attempt()
 	}
 	return err
 }

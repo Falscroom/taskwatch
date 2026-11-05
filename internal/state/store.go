@@ -7,11 +7,11 @@ import (
 	"errors"
 	"maps"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
 	"taskwatch/internal/domain"
+	"taskwatch/internal/platform/fsutil"
 )
 
 const retention = 90 * 24 * time.Hour
@@ -136,14 +136,7 @@ func (s *Store) Save() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
+	if err := fsutil.WriteFileAtomic(s.path, data, 0o600); err != nil {
 		return err
 	}
 	s.fresh = false

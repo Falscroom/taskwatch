@@ -22,7 +22,7 @@ linters:
   exclusions:
     rules:
       # cgo-константы Security.framework gocritic видит как одинаковые выражения.
-      - path: internal/keychain/
+      - path: internal/platform/keychain/
         linters: [gocritic]
         text: dupSubExpr
 
