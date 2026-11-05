@@ -103,7 +103,7 @@ func newHandler(eng *engine.Engine, configPath string, assets http.Handler, open
 			URL string `json:"url"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil ||
-			!(strings.HasPrefix(in.URL, "https://") || strings.HasPrefix(in.URL, "http://")) {
+			!strings.HasPrefix(in.URL, "https://") && !strings.HasPrefix(in.URL, "http://") {
 			writeError(w, http.StatusBadRequest, "http(s) url is required")
 			return
 		}

@@ -1,11 +1,18 @@
 package keychain
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
-// Roundtrip на временной записи: до реальных токенов не касается.
+// Roundtrip на временной записи: до реальных токенов не касается, но лезет
+// в настоящую Связку ключей — поэтому только по явному TASKWATCH_KEYCHAIN_TEST=1.
 func TestSaveLoadDelete(t *testing.T) {
+	if os.Getenv("TASKWATCH_KEYCHAIN_TEST") == "" {
+		t.Skip("set TASKWATCH_KEYCHAIN_TEST=1 to run against the real Keychain")
+	}
 	const account = "test-roundtrip"
-	defer Delete(account) // уборка даже при падении
+	t.Cleanup(func() { _ = Delete(account) }) // уборка даже при падении
 
 	if err := Save(account, "first"); err != nil {
 		t.Fatalf("save: %v", err)

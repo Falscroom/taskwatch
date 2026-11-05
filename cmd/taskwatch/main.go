@@ -86,15 +86,16 @@ func main() {
 		}
 	case "web":
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
 		log.Printf("http://%s", *addr)
-		if err := gui.Serve(ctx, eng, *configPath, *addr); err != nil {
+		err := gui.Serve(ctx, eng, *configPath, *addr)
+		stop()
+		if err != nil {
 			log.Fatal(err)
 		}
 	case "run":
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
 		eng.Run(ctx)
+		stop()
 	case "once":
 		if err := eng.Tick(context.Background()); err != nil {
 			log.Fatal(err)

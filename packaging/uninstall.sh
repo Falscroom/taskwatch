@@ -10,4 +10,4 @@ rm -f "$PLIST" "$HOME/.local/bin/taskwatch"
 rm -rf "$HOME/.local/share/taskwatch"
 
 echo "taskwatch остановлен и удалён."
-echo "Конфиг с токенами остался в ~/.config/taskwatch — удали руками, если не нужен: rm -rf ~/.config/taskwatch"
+echo "Токены удалены из Связки ключей. Конфиг с настройками остался в ~/.config/taskwatch — удали руками, если не нужен: rm -rf ~/.config/taskwatch"
