@@ -65,7 +65,7 @@ func TestCollectLinksMRsToTasks(t *testing.T) {
 		t.Fatalf("task 1 MRs = %+v", t1.MRs)
 	}
 	m := t1.MRs[0]
-	if m.Approvals != 2 || strings.Join(m.ApprovedBy, ",") != "bob,eve" || len(m.Reviewers) != 1 || len(m.Notes) != 1 {
+	if m.Approvals() != 2 || strings.Join(m.ApprovedBy, ",") != "bob,eve" || len(m.Reviewers) != 1 || len(m.Notes) != 1 {
 		t.Errorf("linked MR details = %+v", m)
 	}
 	if len(t2.MRs) != 1 || t2.MRs[0].IID != 2 {
@@ -145,7 +145,7 @@ func TestCollectMergedMR(t *testing.T) {
 	if strings.Join(mr.ReleaseBranches, ",") != "release/1.0,release/1.1" {
 		t.Errorf("release branches = %v", mr.ReleaseBranches)
 	}
-	if mr.Approvals != 0 || mr.Reviewers != nil || mr.Notes != nil {
+	if mr.Approvals() != 0 || mr.Reviewers != nil || mr.Notes != nil {
 		t.Errorf("merged MR must not load approvals/reviewers/notes: %+v", mr)
 	}
 	for _, r := range srv.Requests() {
@@ -207,30 +207,6 @@ func TestCollectNothingConfigured(t *testing.T) {
 	snap, err := newCollector(srv, false, func(c *config.Config) { c.GitLab = config.GitLab{} }).Collect(context.Background())
 	if err != nil || len(snap.AllMRs()) != 0 || len(srv.Requests()) != 0 {
 		t.Errorf("snap = %+v, err = %v, requests = %v", snap, err, srv.Requests())
-	}
-}
-
-func TestIssueKey(t *testing.T) {
-	cases := []struct{ branch, title, want string }{
-		{"feature/app-1234-login", "whatever", "APP-1234"},
-		{"ABC-1", "XYZ-2 title", "ABC-1"},
-		{"hotfix", "ABC-77: crash", "ABC-77"},
-		{"hotfix", "no key here", ""},
-		{"v2-release", "", ""}, // после дефиса не число
-		{"a-1", "", ""},        // проект из одной буквы не считается ключом
-		{"x2-15", "", "X2-15"},
-	}
-	for _, tc := range cases {
-		if got := issueKey(gitlab.MergeRequest{SourceBranch: tc.branch, Title: tc.title}); got != tc.want {
-			t.Errorf("issueKey(%q, %q) = %q, want %q", tc.branch, tc.title, got, tc.want)
-		}
-	}
-}
-
-func TestIsApprovedBy(t *testing.T) {
-	mr := &MR{ApprovedBy: []string{"a", "b"}}
-	if !mr.IsApprovedBy("b") || mr.IsApprovedBy("c") {
-		t.Error("IsApprovedBy")
 	}
 }
 

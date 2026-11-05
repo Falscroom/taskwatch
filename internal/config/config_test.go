@@ -193,3 +193,18 @@ func TestSave(t *testing.T) {
 		t.Errorf("roundtrip = %+v", back)
 	}
 }
+
+func TestPolicy(t *testing.T) {
+	c := Default("/x/config.yaml")
+	c.GitLab.Username = "gl-me"
+	c.YouTrack.Login = "yt-me"
+	c.Rules.RequiredApprovals = 3
+	c.Rules.ReviewState = "Code Review"
+	c.Rules.NextCommand = "State QA"
+	c.Rules.MRBehindCommits = 7
+	p := c.Policy()
+	if p.GitLabUser != "gl-me" || p.YouTrackUser != "yt-me" || p.RequiredApprovals != 3 ||
+		p.ReviewState != "Code Review" || p.NextCommand != "State QA" || p.BehindThreshold != 7 {
+		t.Errorf("policy = %+v", p)
+	}
+}

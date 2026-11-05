@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"taskwatch/internal/config"
-	"taskwatch/internal/watch"
+	"taskwatch/internal/domain"
 )
 
 type Transition struct {
@@ -16,6 +15,8 @@ type Transition struct {
 }
 
 type Event struct {
+	// Key — стабильный ключ события; уже отправленные лежат в state.json,
+	// поэтому формат ключей менять нельзя.
 	Key        string
 	Title      string
 	Message    string
@@ -25,21 +26,21 @@ type Event struct {
 	MRID int
 }
 
-func Evaluate(snap *watch.Snapshot, cfg *config.Config) []Event {
+func Evaluate(snap *domain.Snapshot, p domain.Policy) []Event {
 	var events []Event
 
 	for _, task := range snap.Tasks {
-		events = append(events, taskEvents(task, cfg)...)
+		events = append(events, taskEvents(task, p)...)
 		for _, mr := range task.MRs {
-			events = append(events, mrEvents(task, mr, cfg)...)
+			events = append(events, mrEvents(task, mr, p)...)
 		}
 	}
 	for _, mr := range snap.Orphans {
-		events = append(events, mrEvents(nil, mr, cfg)...)
+		events = append(events, mrEvents(nil, mr, p)...)
 	}
 
 	for _, mr := range snap.Reviews {
-		if mr.IsApprovedBy(cfg.GitLab.Username) {
+		if !p.AwaitsMyReview(mr) {
 			continue
 		}
 		events = append(events, Event{
@@ -53,21 +54,21 @@ func Evaluate(snap *watch.Snapshot, cfg *config.Config) []Event {
 	return events
 }
 
-func taskEvents(task *watch.Task, cfg *config.Config) []Event {
+func taskEvents(task *domain.Task, p domain.Policy) []Event {
 	events := []Event{{
-		Key:     fmt.Sprintf("yt-state:%s:%s", task.Issue.ID, task.State),
-		Title:   task.Issue.ID,
+		Key:     fmt.Sprintf("yt-state:%s:%s", task.ID, task.State),
+		Title:   task.ID,
 		Message: "Статус: " + task.State,
 		URL:     task.URL,
 	}}
 
 	for _, c := range task.Comments {
-		if c.Author.Login == cfg.YouTrack.Login {
+		if c.Author == p.YouTrackUser {
 			continue
 		}
 		events = append(events, Event{
 			Key:     "yt-comment:" + c.ID,
-			Title:   fmt.Sprintf("Комментарий в %s от %s", task.Issue.ID, c.Author.Login),
+			Title:   fmt.Sprintf("Комментарий в %s от %s", task.ID, c.Author),
 			Message: short(c.Text),
 			URL:     task.URL,
 		})
@@ -75,15 +76,15 @@ func taskEvents(task *watch.Task, cfg *config.Config) []Event {
 	return events
 }
 
-func mrEvents(task *watch.Task, mr *watch.MR, cfg *config.Config) []Event {
+func mrEvents(task *domain.Task, mr *domain.MR, p domain.Policy) []Event {
 	var events []Event
 	label := mr.Title
 	if task != nil {
-		label = task.Issue.ID
+		label = task.ID
 	}
 
 	for _, n := range mr.Notes {
-		if n.System || n.Author.Username == cfg.GitLab.Username {
+		if n.System || n.Author.Username == p.GitLabUser {
 			continue
 		}
 		events = append(events, Event{
@@ -94,16 +95,16 @@ func mrEvents(task *watch.Task, mr *watch.MR, cfg *config.Config) []Event {
 		})
 	}
 
-	if p := mr.HeadPipeline; p != nil && (p.Status == "failed" || p.Status == "canceled") {
+	if pl := mr.Pipeline; pl.Failed() {
 		events = append(events, Event{
-			Key:     fmt.Sprintf("pipeline:%d:%s", p.ID, p.Status),
+			Key:     fmt.Sprintf("pipeline:%d:%s", pl.ID, pl.Status),
 			Title:   "🔴 Сборка " + label,
-			Message: p.Status,
-			URL:     p.WebURL,
+			Message: string(pl.Status),
+			URL:     pl.WebURL,
 		})
 	}
 
-	if mr.State == "opened" && mr.HasConflicts {
+	if mr.Open() && mr.HasConflicts {
 		events = append(events, Event{
 			Key:     fmt.Sprintf("conflict:%d:%s", mr.ID, mr.SHA),
 			Title:   "Конфликты в " + label,
@@ -112,16 +113,15 @@ func mrEvents(task *watch.Task, mr *watch.MR, cfg *config.Config) []Event {
 		})
 	}
 
-	if task != nil && mr.State == "opened" && mr.Approvals >= cfg.Rules.RequiredApprovals &&
-		strings.EqualFold(task.State, cfg.Rules.ReviewState) {
+	if p.ReadyToTransition(task, mr) {
 		e := Event{
 			Key:     fmt.Sprintf("approved:%d", mr.ID),
-			Title:   fmt.Sprintf("✅ %s: %d апрува", task.Issue.ID, mr.Approvals),
+			Title:   fmt.Sprintf("✅ %s: %d апрува", task.ID, mr.Approvals()),
 			Message: "Пора переводить дальше",
 			URL:     task.URL,
 		}
-		if cfg.Rules.NextCommand != "" {
-			e.Transition = &Transition{IssueID: task.Issue.ID, Command: cfg.Rules.NextCommand}
+		if p.CanTransition() {
+			e.Transition = &Transition{IssueID: task.ID, Command: p.NextCommand}
 		}
 		events = append(events, e)
 	}

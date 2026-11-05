@@ -391,14 +391,3 @@ func TestRunStopsOnCancel(t *testing.T) {
 		t.Fatal("Run did not stop")
 	}
 }
-
-func TestCountsOf(t *testing.T) {
-	snap := &watch.Snapshot{
-		Tasks:   []*watch.Task{{MRs: []*watch.MR{{}, {}}}, {}},
-		Orphans: []*watch.MR{{}},
-		Reviews: []*watch.MR{{}, {}, {}},
-	}
-	if got := countsOf(snap); got != (state.Counts{Own: 3, Reviews: 3, Tasks: 2}) {
-		t.Errorf("counts = %+v", got)
-	}
-}

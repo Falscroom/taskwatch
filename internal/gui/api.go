@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"taskwatch/internal/config"
+	"taskwatch/internal/domain"
 	"taskwatch/internal/engine"
 	"taskwatch/internal/gitlab"
 	"taskwatch/internal/keychain"
@@ -22,7 +23,7 @@ func newHandler(eng *engine.Engine, configPath string, assets http.Handler, open
 
 	mux.HandleFunc("GET /api/view", func(w http.ResponseWriter, r *http.Request) {
 		snap, updated, err := eng.Snapshot()
-		writeJSON(w, http.StatusOK, view.Build(snap, updated, err, eng.Config(), eng.Mutes()))
+		writeJSON(w, http.StatusOK, view.Build(snap, updated, err, eng.Config().Policy(), eng.Mutes()))
 	})
 
 	// POST /api/mute — заглушить MR: {key: "mr:123", hours: 1|3|24}; hours 0 = навсегда.
@@ -34,7 +35,7 @@ func newHandler(eng *engine.Engine, configPath string, assets http.Handler, open
 			AlsoTitle bool    `json:"alsoTitle"`
 			Title     string  `json:"title"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || !strings.HasPrefix(in.Key, "mr:") {
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || !domain.IsMRKey(in.Key) {
 			writeError(w, http.StatusBadRequest, "mr key is required")
 			return
 		}
@@ -67,7 +68,7 @@ func newHandler(eng *engine.Engine, configPath string, assets http.Handler, open
 			Key   string `json:"key"`
 			Title string `json:"title"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || !strings.HasPrefix(in.Key, "mr:") {
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || !domain.IsMRKey(in.Key) {
 			writeError(w, http.StatusBadRequest, "mr key is required")
 			return
 		}

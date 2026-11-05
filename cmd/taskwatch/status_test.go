@@ -5,28 +5,20 @@ import (
 	"strings"
 	"testing"
 
-	"taskwatch/internal/gitlab"
-	"taskwatch/internal/watch"
-	"taskwatch/internal/youtrack"
+	"taskwatch/internal/domain"
 )
 
 func TestPrintStatus(t *testing.T) {
-	mr := &watch.MR{
-		MergeRequest: gitlab.MergeRequest{IID: 7, State: "opened", Title: "Fix", DivergedCommitsCount: 3,
-			HeadPipeline: &gitlab.Pipeline{Status: "failed"}},
-		Approvals: 2,
-	}
-	merged := &watch.MR{
-		MergeRequest:    gitlab.MergeRequest{IID: 8, State: "merged", Title: "Old"},
-		ReleaseBranches: []string{"release/1", "release/2"},
-	}
-	snap := &watch.Snapshot{
-		Tasks: []*watch.Task{
-			{Issue: youtrack.Issue{ID: "ABC-1", Summary: "Login"}, State: "Code Review", MRs: []*watch.MR{mr}},
-			{Issue: youtrack.Issue{ID: "ABC-2", Summary: "Idle"}, State: "Open"},
+	mr := &domain.MR{IID: 7, State: domain.MROpened, Title: "Fix", Behind: 3,
+		Pipeline: &domain.Pipeline{Status: "failed"}, ApprovedBy: []string{"a", "b"}}
+	merged := &domain.MR{IID: 8, State: domain.MRMerged, Title: "Old", ReleaseBranches: []string{"release/1", "release/2"}}
+	snap := &domain.Snapshot{
+		Tasks: []*domain.Task{
+			{ID: "ABC-1", Summary: "Login", State: "Code Review", MRs: []*domain.MR{mr}},
+			{ID: "ABC-2", Summary: "Idle", State: "Open"},
 		},
-		Orphans: []*watch.MR{merged},
-		Reviews: []*watch.MR{{MergeRequest: gitlab.MergeRequest{Title: "Their MR", WebURL: "https://gl/9"}}},
+		Orphans: []*domain.MR{merged},
+		Reviews: []*domain.MR{{Title: "Their MR", WebURL: "https://gl/9"}},
 	}
 	var buf bytes.Buffer
 	printStatus(&buf, snap)
@@ -53,11 +45,11 @@ func TestPrintStatus(t *testing.T) {
 }
 
 func TestPipelineIcon(t *testing.T) {
-	cases := map[string]string{
+	cases := map[domain.PipelineStatus]string{
 		"success": "🟢", "failed": "🔴", "canceled": "🔴", "running": "🟡", "manual": "🟡", "skipped": "⚪", "": "⚪",
 	}
 	for status, want := range cases {
-		if got := pipelineIcon(status); got != want {
+		if got := pipelineIcon(status.Outcome()); got != want {
 			t.Errorf("pipelineIcon(%q) = %q, want %q", status, got, want)
 		}
 	}

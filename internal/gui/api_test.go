@@ -2,6 +2,7 @@ package gui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"image/png"
 	"io"
@@ -92,6 +93,64 @@ func TestView(t *testing.T) {
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil || v.Cards == nil {
 		t.Errorf("body = %s", rec.Body)
+	}
+}
+
+// Сквозной путь: GitLab → сборщик → движок → /api/view в том виде, что ждёт фронт.
+func TestViewEndToEnd(t *testing.T) {
+	t.Setenv("PATH", "") // уведомления не отправляются
+	srv := fakeapi.New(t)
+	broken := fakeapi.MR{MergeRequest: gitlab.MergeRequest{ID: 101, IID: 1, ProjectID: 1, State: "opened", Title: "Broken",
+		HasConflicts: true, BlockingDiscussionsResolved: true, Author: gitlab.User{Username: "me", Name: "Me Myself"}}}
+	theirs := fakeapi.MR{MergeRequest: gitlab.MergeRequest{ID: 102, IID: 2, ProjectID: 1, State: "opened", Title: "Theirs",
+		BlockingDiscussionsResolved: true, Author: gitlab.User{Username: "bob"}}}
+	srv.SetMine(broken)
+	srv.SetReviews(theirs)
+	cfg := configured(srv.URL)
+	cfg.YouTrack = config.YouTrack{}
+	h := newAPI(t, cfg)
+	if err := h.eng.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var v struct {
+		NeedsYou int `json:"needsYou"`
+		Cards    []struct {
+			Key    string `json:"key"`
+			Group  string `json:"group"`
+			Mine   bool   `json:"mine"`
+			Review bool   `json:"review"`
+			Author struct {
+				Initials string `json:"initials"`
+			} `json:"author"`
+			Badges []struct {
+				Text string `json:"text"`
+				Tone string `json:"tone"`
+			} `json:"badges"`
+		} `json:"cards"`
+	}
+	rec := h.do(t, http.MethodGet, "/api/view", nil)
+	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.NeedsYou != 2 || len(v.Cards) != 2 {
+		t.Fatalf("view = %s", rec.Body)
+	}
+	mine, review := v.Cards[0], v.Cards[1]
+	if mine.Key != "mr:101" || mine.Group != "work" || !mine.Mine || mine.Author.Initials != "MM" ||
+		len(mine.Badges) != 1 || mine.Badges[0].Text != "Конфликты" || mine.Badges[0].Tone != "red" {
+		t.Errorf("own card = %+v", mine)
+	}
+	if review.Key != "mr:102" || review.Group != "review" || !review.Review {
+		t.Errorf("review card = %+v", review)
+	}
+
+	// Заглушённая через API карточка уходит в «Заглушено» и перестаёт считаться.
+	h.do(t, http.MethodPost, "/api/mute", map[string]any{"key": "mr:102"})
+	rec = h.do(t, http.MethodGet, "/api/view", nil)
+	_ = json.Unmarshal(rec.Body.Bytes(), &v)
+	if v.NeedsYou != 1 || v.Cards[1].Group != "muted" {
+		t.Errorf("after mute: %s", rec.Body)
 	}
 }
 

@@ -123,10 +123,3 @@ func TestOpenNullMaps(t *testing.T) {
 	s.Mark("x") // не паникует на nil-карте
 	s.Mute("y", time.Time{})
 }
-
-func TestActive(t *testing.T) {
-	now := time.Now()
-	if !Active(time.Time{}, now) || !Active(now.Add(time.Second), now) || Active(now, now) || Active(now.Add(-time.Second), now) {
-		t.Error("Active")
-	}
-}

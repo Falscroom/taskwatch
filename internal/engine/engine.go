@@ -5,13 +5,13 @@ package engine
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"taskwatch/internal/config"
+	"taskwatch/internal/domain"
 	"taskwatch/internal/notify"
 	"taskwatch/internal/rules"
 	"taskwatch/internal/state"
@@ -39,7 +39,7 @@ type Engine struct {
 	OnUpdate func()
 
 	mu      sync.RWMutex
-	snap    *watch.Snapshot
+	snap    *domain.Snapshot
 	updated time.Time
 	lastErr error
 
@@ -101,7 +101,7 @@ func (e *Engine) Refresh() {
 	}
 }
 
-func (e *Engine) Snapshot() (*watch.Snapshot, time.Time, error) {
+func (e *Engine) Snapshot() (*domain.Snapshot, time.Time, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.snap, e.updated, e.lastErr
@@ -111,7 +111,7 @@ func (e *Engine) Snapshot() (*watch.Snapshot, time.Time, error) {
 func (e *Engine) Tick(ctx context.Context) error {
 	d := e.deps.Load()
 
-	var snap *watch.Snapshot
+	var snap *domain.Snapshot
 	err := errNotConfigured
 	if d.cfg.Configured() {
 		snap, err = d.collector.Collect(ctx)
@@ -123,7 +123,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 	// только со второго подтверждения, а между тиками устраиваем перепроверку.
 	if snap != nil && e.degraded(snap) && !e.recheck {
 		e.recheck = true
-		base, now := e.countsBaseline(), countsOf(snap)
+		base, now := e.countsBaseline(), snap.Counts()
 		log.Printf("подозрительный тик: свои MR %d→%d, ревью %d→%d, таски %d→%d — держу прошлый вид, перепроверяю сразу",
 			base.Own, now.Own, base.Reviews, now.Reviews, base.Tasks, now.Tasks)
 		e.Refresh()
@@ -139,7 +139,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 
 	e.setLast(snap, err)
 	if snap != nil {
-		e.store.SetCounts(countsOf(snap))
+		e.store.SetCounts(state.Counts(snap.Counts()))
 	}
 	if e.OnUpdate != nil {
 		defer e.OnUpdate()
@@ -153,16 +153,14 @@ func (e *Engine) Tick(ctx context.Context) error {
 		log.Print("first run: remembering current events without notifications")
 	}
 
-	mutes := e.store.Mutes()
-	now := time.Now()
-	// Заглушенность MR: личное правило "mr:<id>" или групповое "title:<название>".
+	mutes, now := e.Mutes(), time.Now()
 	mutedIDs := make(map[int]bool)
 	for _, mr := range snap.AllMRs() {
-		if muteActive(mutes, fmt.Sprintf("mr:%d", mr.ID), now) || muteActive(mutes, "title:"+mr.Title, now) {
+		if _, muted := mutes.Match(mr, now); muted {
 			mutedIDs[mr.ID] = true
 		}
 	}
-	for _, ev := range rules.Evaluate(snap, d.cfg) {
+	for _, ev := range rules.Evaluate(snap, d.cfg.Policy()) {
 		// Заглушенный MR: событие запоминаем без отправки, чтобы после снятия заглушения
 		// не прилетела накопившаяся за время тишины старуха.
 		if ev.MRID != 0 && mutedIDs[ev.MRID] {
@@ -184,7 +182,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 	return e.store.Save()
 }
 
-func (e *Engine) setLast(snap *watch.Snapshot, err error) {
+func (e *Engine) setLast(snap *domain.Snapshot, err error) {
 	e.mu.Lock()
 	e.lastErr = err
 	if err == nil {
@@ -213,7 +211,7 @@ func (e *Engine) Transition(ctx context.Context, issueID string) error {
 func (e *Engine) Mute(key, title string, until time.Time) error {
 	e.store.Mute(key, until)
 	if title != "" {
-		e.store.Mute("title:"+title, until)
+		e.store.Mute(domain.TitleKey(title), until)
 	}
 	if err := e.store.Save(); err != nil {
 		return err
@@ -230,7 +228,7 @@ func (e *Engine) Mute(key, title string, until time.Time) error {
 func (e *Engine) Unmute(key, title string) error {
 	e.store.Unmute(key)
 	if title != "" {
-		e.store.Unmute("title:" + title)
+		e.store.Unmute(domain.TitleKey(title))
 	}
 	if err := e.store.Save(); err != nil {
 		return err
@@ -241,39 +239,22 @@ func (e *Engine) Unmute(key, title string) error {
 	return nil
 }
 
-// muteActive — действует ли заглушение по ключу. Нулевое время в карте значит
-// «навсегда», поэтому отсутствие ключа надо проверять явно, а не читать нуль.
-func muteActive(mutes map[string]time.Time, key string, now time.Time) bool {
-	until, ok := mutes[key]
-	return ok && state.Active(until, now)
-}
-
-// Mutes — текущие заглушения (ключ → до когда; zero = навсегда) для view.Build.
-func (e *Engine) Mutes() map[string]time.Time { return e.store.Mutes() }
-
-// countsOf — размеры снапшота по разделам, для сравнения тиков между собой.
-func countsOf(s *watch.Snapshot) state.Counts {
-	c := state.Counts{Reviews: len(s.Reviews), Tasks: len(s.Tasks)}
-	for _, t := range s.Tasks {
-		c.Own += len(t.MRs)
-	}
-	c.Own += len(s.Orphans)
-	return c
-}
+// Mutes — текущие заглушения для view.Build и сверки событий.
+func (e *Engine) Mutes() domain.MuteRules { return e.store.Mutes() }
 
 // countsBaseline — с чем сравнивать: прошлый снапшот в памяти, а после рестарта —
 // счётчики из state.json.
-func (e *Engine) countsBaseline() state.Counts {
+func (e *Engine) countsBaseline() domain.Counts {
 	if prev, _, _ := e.Snapshot(); prev != nil {
-		return countsOf(prev)
+		return prev.Counts()
 	}
-	return e.store.Counts()
+	return domain.Counts(e.store.Counts())
 }
 
 // degraded — тик обнулил разделы, которые были непустыми. Честная ошибка так
 // не выглядит (ошибки возвращаются с err), это похоже на сбой выдачи GitLab.
-func (e *Engine) degraded(snap *watch.Snapshot) bool {
-	base, now := e.countsBaseline(), countsOf(snap)
+func (e *Engine) degraded(snap *domain.Snapshot) bool {
+	base, now := e.countsBaseline(), snap.Counts()
 	return (now.Own == 0 && base.Own > 0) ||
 		(now.Reviews == 0 && base.Reviews > 0) ||
 		(now.Tasks == 0 && base.Tasks > 0)

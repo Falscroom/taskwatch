@@ -4,31 +4,33 @@ import (
 	"strings"
 	"testing"
 
-	"taskwatch/internal/config"
-	"taskwatch/internal/gitlab"
-	"taskwatch/internal/watch"
-	"taskwatch/internal/youtrack"
+	"taskwatch/internal/domain"
 )
 
-func testConfig() *config.Config {
-	cfg := config.Default("/tmp/taskwatch/config.yaml")
-	cfg.GitLab.Username = "me"
-	cfg.YouTrack.Login = "me"
-	cfg.Rules.RequiredApprovals = 2
-	cfg.Rules.ReviewState = "Code Review"
-	cfg.Rules.NextCommand = "State Ready for QA"
-	return cfg
+func testPolicy() domain.Policy {
+	return domain.Policy{
+		GitLabUser: "me", YouTrackUser: "me",
+		RequiredApprovals: 2, ReviewState: "Code Review", NextCommand: "State Ready for QA",
+	}
 }
 
-func openMR(id int) *watch.MR {
-	return &watch.MR{MergeRequest: gitlab.MergeRequest{
-		ID: id, IID: id, ProjectID: 1, Title: "Fix login", WebURL: "https://gl/mr", State: "opened", SHA: "abc",
-		BlockingDiscussionsResolved: true,
-	}}
+func openMR(id int) *domain.MR {
+	return &domain.MR{
+		ID: id, IID: id, ProjectID: 1, Title: "Fix login", WebURL: "https://gl/mr", State: domain.MROpened, SHA: "abc",
+		DiscussionsResolved: true,
+	}
 }
 
-func task(id, state string, mrs ...*watch.MR) *watch.Task {
-	return &watch.Task{Issue: youtrack.Issue{ID: id, Summary: "Summary " + id}, State: state, URL: "https://yt/issue/" + id, MRs: mrs}
+func task(id, state string, mrs ...*domain.MR) *domain.Task {
+	return &domain.Task{ID: id, Summary: "Summary " + id, State: state, URL: "https://yt/issue/" + id, MRs: mrs}
+}
+
+func approvers(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = string(rune('a' + i))
+	}
+	return out
 }
 
 // byKey — события по ключам; заодно проверяет, что ключи уникальны.
@@ -46,15 +48,11 @@ func byKey(t *testing.T, events []Event) map[string]Event {
 
 func TestTaskEvents(t *testing.T) {
 	tk := task("ABC-1", "In Progress")
-	tk.Comments = []youtrack.Comment{
-		{ID: "c1", Text: "  please\n\tcheck  ", Author: struct {
-			Login string `json:"login"`
-		}{"alice"}},
-		{ID: "c2", Text: "my own", Author: struct {
-			Login string `json:"login"`
-		}{"me"}},
+	tk.Comments = []domain.Comment{
+		{ID: "c1", Text: "  please\n\tcheck  ", Author: "alice"},
+		{ID: "c2", Text: "my own", Author: "me"},
 	}
-	got := byKey(t, Evaluate(&watch.Snapshot{Tasks: []*watch.Task{tk}}, testConfig()))
+	got := byKey(t, Evaluate(&domain.Snapshot{Tasks: []*domain.Task{tk}}, testPolicy()))
 
 	if len(got) != 2 {
 		t.Fatalf("events = %v, want state + one foreign comment", got)
@@ -71,17 +69,17 @@ func TestTaskEvents(t *testing.T) {
 
 func TestMREvents(t *testing.T) {
 	mr := openMR(10)
-	mr.Notes = []gitlab.Note{
-		{ID: 1, Body: "looks good", Author: gitlab.User{Username: "bob"}},
-		{ID: 2, Body: "approved this", System: true, Author: gitlab.User{Username: "bob"}},
-		{ID: 3, Body: "self note", Author: gitlab.User{Username: "me"}},
+	mr.Notes = []domain.Note{
+		{ID: 1, Body: "looks good", Author: domain.User{Username: "bob"}},
+		{ID: 2, Body: "approved this", System: true, Author: domain.User{Username: "bob"}},
+		{ID: 3, Body: "self note", Author: domain.User{Username: "me"}},
 	}
-	mr.HeadPipeline = &gitlab.Pipeline{ID: 77, Status: "failed", WebURL: "https://gl/p/77"}
+	mr.Pipeline = &domain.Pipeline{ID: 77, Status: "failed", WebURL: "https://gl/p/77"}
 	mr.HasConflicts = true
 	mr.ReleaseBranches = []string{"release/1.0", "release/1.1"}
 
 	t.Run("linked to task", func(t *testing.T) {
-		got := byKey(t, Evaluate(&watch.Snapshot{Tasks: []*watch.Task{task("ABC-1", "In Progress", mr)}}, testConfig()))
+		got := byKey(t, Evaluate(&domain.Snapshot{Tasks: []*domain.Task{task("ABC-1", "In Progress", mr)}}, testPolicy()))
 		want := map[string]string{
 			"gl-note:1":                  "Комментарий в MR ABC-1 от bob",
 			"pipeline:77:failed":         "🔴 Сборка ABC-1",
@@ -116,7 +114,8 @@ func TestMREvents(t *testing.T) {
 	})
 
 	t.Run("orphan uses MR title as label", func(t *testing.T) {
-		got := byKey(t, Evaluate(&watch.Snapshot{Orphans: []*watch.MR{mr}}, testConfig()))
+		mr.ApprovedBy = approvers(5)
+		got := byKey(t, Evaluate(&domain.Snapshot{Orphans: []*domain.MR{mr}}, testPolicy()))
 		if e := got["gl-note:1"]; e.Title != "Комментарий в MR Fix login от bob" {
 			t.Errorf("note title = %q", e.Title)
 		}
@@ -127,13 +126,13 @@ func TestMREvents(t *testing.T) {
 }
 
 func TestPipelineEvents(t *testing.T) {
-	for status, want := range map[string]bool{
+	for status, want := range map[domain.PipelineStatus]bool{
 		"failed": true, "canceled": true, "success": false, "running": false, "skipped": false,
 	} {
 		mr := openMR(1)
-		mr.HeadPipeline = &gitlab.Pipeline{ID: 5, Status: status}
-		got := byKey(t, Evaluate(&watch.Snapshot{Orphans: []*watch.MR{mr}}, testConfig()))
-		if _, ok := got["pipeline:5:"+status]; ok != want {
+		mr.Pipeline = &domain.Pipeline{ID: 5, Status: status}
+		got := byKey(t, Evaluate(&domain.Snapshot{Orphans: []*domain.MR{mr}}, testPolicy()))
+		if _, ok := got["pipeline:5:"+string(status)]; ok != want {
 			t.Errorf("pipeline %s: event = %v, want %v", status, ok, want)
 		}
 	}
@@ -142,8 +141,8 @@ func TestPipelineEvents(t *testing.T) {
 func TestConflictOnlyForOpened(t *testing.T) {
 	mr := openMR(1)
 	mr.HasConflicts = true
-	mr.State = "merged"
-	if got := byKey(t, Evaluate(&watch.Snapshot{Orphans: []*watch.MR{mr}}, testConfig())); len(got) != 0 {
+	mr.State = domain.MRMerged
+	if got := byKey(t, Evaluate(&domain.Snapshot{Orphans: []*domain.MR{mr}}, testPolicy())); len(got) != 0 {
 		t.Errorf("merged MR with conflicts: %v", got)
 	}
 }
@@ -152,33 +151,36 @@ func TestApprovedEvent(t *testing.T) {
 	cases := []struct {
 		name       string
 		state      string // статус таски
-		mrState    string
+		mrState    domain.MRState
 		approvals  int
 		command    string
 		wantEvent  bool
 		wantTransi bool
 	}{
-		{"ready", "Code Review", "opened", 2, "State Ready for QA", true, true},
-		{"state compared case-insensitively", "code review", "opened", 3, "State Ready for QA", true, true},
-		{"no command — no transition", "Code Review", "opened", 2, "", true, false},
-		{"not enough approvals", "Code Review", "opened", 1, "State Ready for QA", false, false},
-		{"other task state", "In Progress", "opened", 2, "State Ready for QA", false, false},
-		{"merged MR", "Code Review", "merged", 2, "State Ready for QA", false, false},
+		{"ready", "Code Review", domain.MROpened, 2, "State Ready for QA", true, true},
+		{"state compared case-insensitively", "code review", domain.MROpened, 3, "State Ready for QA", true, true},
+		{"no command — no transition", "Code Review", domain.MROpened, 2, "", true, false},
+		{"not enough approvals", "Code Review", domain.MROpened, 1, "State Ready for QA", false, false},
+		{"other task state", "In Progress", domain.MROpened, 2, "State Ready for QA", false, false},
+		{"merged MR", "Code Review", domain.MRMerged, 2, "State Ready for QA", false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := testConfig()
-			cfg.Rules.NextCommand = tc.command
+			p := testPolicy()
+			p.NextCommand = tc.command
 			mr := openMR(10)
 			mr.State = tc.mrState
-			mr.Approvals = tc.approvals
-			got := byKey(t, Evaluate(&watch.Snapshot{Tasks: []*watch.Task{task("ABC-1", tc.state, mr)}}, cfg))
+			mr.ApprovedBy = approvers(tc.approvals)
+			got := byKey(t, Evaluate(&domain.Snapshot{Tasks: []*domain.Task{task("ABC-1", tc.state, mr)}}, p))
 			e, ok := got["approved:10"]
 			if ok != tc.wantEvent {
 				t.Fatalf("approved event = %v, want %v", ok, tc.wantEvent)
 			}
 			if !ok {
 				return
+			}
+			if e.Title != "✅ ABC-1: "+string(rune('0'+tc.approvals))+" апрува" {
+				t.Errorf("title = %q", e.Title)
 			}
 			if (e.Transition != nil) != tc.wantTransi {
 				t.Fatalf("transition = %+v, want %v", e.Transition, tc.wantTransi)
@@ -198,20 +200,23 @@ func TestReviewEvents(t *testing.T) {
 	waiting.Title = "Add cache"
 	approved := openMR(21)
 	approved.ApprovedBy = []string{"me"}
-	// Запрошенные изменения не считаются «уже отревьюил»: событие всё равно есть.
+	// Запросил изменения — тоже своё слово сказал: «Нужно ревью» уже не нужно.
 	changes := openMR(22)
-	changes.Reviewers = []gitlab.Reviewer{{User: gitlab.User{Username: "me"}, State: "requested_changes"}}
+	changes.Reviewers = []domain.Reviewer{{User: domain.User{Username: "me"}, State: domain.ReviewerRequestedChanges}}
+	// Оставил ревью без решения — всё ещё ждут.
+	commented := openMR(23)
+	commented.Reviewers = []domain.Reviewer{{User: domain.User{Username: "me"}, State: domain.ReviewerReviewed}}
 
-	got := byKey(t, Evaluate(&watch.Snapshot{Reviews: []*watch.MR{waiting, approved, changes}}, testConfig()))
+	got := byKey(t, Evaluate(&domain.Snapshot{Reviews: []*domain.MR{waiting, approved, changes, commented}}, testPolicy()))
 	if len(got) != 2 {
-		t.Fatalf("events = %v, want review:20 and review:22", got)
+		t.Fatalf("events = %v, want review:20 and review:23", got)
 	}
 	e := got["review:20"]
 	if e.Title != "Нужно ревью" || e.Message != "Add cache" || e.URL != "https://gl/mr" || e.MRID != 20 {
 		t.Errorf("review event = %+v", e)
 	}
-	if _, ok := got["review:22"]; !ok {
-		t.Error("review with requested changes must still produce an event")
+	if _, ok := got["review:23"]; !ok {
+		t.Error("review without decision must still produce an event")
 	}
 }
 

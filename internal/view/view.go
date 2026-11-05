@@ -1,20 +1,21 @@
-// Package view раскладывает снапшот по карточкам и группам для окна в меню-баре.
+// Package view раскладывает доменный снапшот по карточкам и группам для окна в
+// меню-баре. Бизнес-решения («требует работы», «готов к переводу») принимает
+// domain.Policy; здесь — только как это показать.
 package view
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
-	"taskwatch/internal/config"
-	"taskwatch/internal/state"
-	"taskwatch/internal/watch"
+	"taskwatch/internal/domain"
 )
 
-// Группы карточек. Первые три — «нужно твоё действие».
+// Группы карточек — это контракт с фронтендом.
 const (
 	GroupWork    = "work"    // твой MR требует работы
 	GroupReady   = "ready"   // апрувы собраны, пора переводить
@@ -25,11 +26,29 @@ const (
 	GroupMuted   = "muted"   // заглушено пользователем — видно только во вкладке «Все»
 )
 
+// groupOrder — порядок групп в списке карточек.
+var groupOrder = []string{GroupWork, GroupReady, GroupReview, GroupWaiting, GroupNoMR, GroupMerged, GroupMuted}
+
+var stageGroup = map[domain.Stage]string{
+	domain.StageNeedsWork:   GroupWork,
+	domain.StageReady:       GroupReady,
+	domain.StageNeedsReview: GroupReview,
+	domain.StageWaiting:     GroupWaiting,
+	domain.StageMerged:      GroupMerged,
+}
+
 // Решение ревьюера — цвет кольца вокруг аватара.
 const (
 	DecisionApproved = "approved"
 	DecisionChanges  = "changes"
 	DecisionPending  = "pending"
+)
+
+// Тона бейджей и статуса пайплайна.
+const (
+	ToneRed    = "red"
+	ToneYellow = "yellow"
+	ToneGreen  = "green"
 )
 
 type Person struct {
@@ -41,7 +60,7 @@ type Person struct {
 
 type Badge struct {
 	Text string `json:"text"`
-	Tone string `json:"tone"` // red, yellow, green, grey
+	Tone string `json:"tone"`
 }
 
 type Action struct {
@@ -74,7 +93,8 @@ type Card struct {
 	Muted      bool   `json:"muted,omitempty"`
 	MutedUntil string `json:"mutedUntil,omitempty"`
 
-	waitHours int // для сортировки, наружу не идёт
+	waitHours int  // для сортировки, наружу не идёт
+	needsMe   bool // требует твоего действия и не заглушена
 }
 
 type View struct {
@@ -84,7 +104,7 @@ type View struct {
 	Cards     []Card    `json:"cards"`
 }
 
-func Build(snap *watch.Snapshot, updated time.Time, err error, cfg *config.Config, mutes map[string]time.Time) View {
+func Build(snap *domain.Snapshot, updated time.Time, err error, p domain.Policy, mutes domain.MuteRules) View {
 	v := View{UpdatedAt: updated, Cards: []Card{}}
 	if err != nil {
 		v.Error = err.Error()
@@ -93,131 +113,193 @@ func Build(snap *watch.Snapshot, updated time.Time, err error, cfg *config.Confi
 		return v
 	}
 
+	b := builder{policy: p, mutes: mutes, now: time.Now()}
 	for _, task := range snap.Tasks {
 		if len(task.MRs) == 0 {
-			v.Cards = append(v.Cards, Card{
-				Key:        "task:" + task.Issue.ID,
-				Group:      GroupNoMR,
-				Mine:       true,
-				Title:      task.Issue.Summary,
-				URL:        task.URL,
-				IssueID:    task.Issue.ID,
-				IssueURL:   task.URL,
-				IssueState: task.State,
-				Reviewers:  []Person{},
-				Release:    []string{},
-				Badges:     []Badge{},
-			})
+			v.Cards = append(v.Cards, taskCard(task))
 			continue
 		}
 		for _, mr := range task.MRs {
-			v.Cards = append(v.Cards, mineCard(task, mr, cfg))
+			v.Cards = append(v.Cards, b.own(task, mr))
 		}
 	}
 	for _, mr := range snap.Orphans {
-		v.Cards = append(v.Cards, mineCard(nil, mr, cfg))
+		v.Cards = append(v.Cards, b.own(nil, mr))
 	}
 	for _, mr := range snap.Reviews {
-		v.Cards = append(v.Cards, reviewCard(mr, cfg))
-	}
-
-	// Заглушенные MR уходят в отдельную группу: скрыты от рабочих вкладок,
-	// но остаются видны во вкладке «Все», откуда их можно вернуть.
-	// Глушат и личный ключ "mr:<id>", и правило по названию "title:<текст>".
-	now := time.Now()
-	for i := range v.Cards {
-		c := &v.Cards[i]
-		until, ok := mutes[c.Key]
-		if !ok && strings.HasPrefix(c.Key, "mr:") {
-			until, ok = mutes["title:"+c.Title]
-		}
-		if !ok || !state.Active(until, now) {
-			continue
-		}
-		c.Muted = true
-		c.Group = GroupMuted
-		if !until.IsZero() {
-			c.MutedUntil = until.Format(time.RFC3339)
-		}
+		v.Cards = append(v.Cards, b.review(mr))
 	}
 
 	for _, c := range v.Cards {
-		if c.Group == GroupWork || c.Group == GroupReady || c.Group == GroupReview {
+		if c.needsMe {
 			v.NeedsYou++
 		}
 	}
-
-	// Внутри групп карточки с большим сроком ожидания поднимаются выше.
-	// Для карточек из разных групп компаратор всегда false — стабильная сортировка
-	// сохраняет исходный порядок между группами.
-	sort.SliceStable(v.Cards, func(i, j int) bool {
-		ci, cj := v.Cards[i], v.Cards[j]
-		return ci.Group == cj.Group && ci.waitHours > cj.waitHours
+	// Группы по порядку, внутри группы дольше ждущие — выше.
+	slices.SortStableFunc(v.Cards, func(a, b Card) int {
+		if a.Group != b.Group {
+			return cmp.Compare(slices.Index(groupOrder, a.Group), slices.Index(groupOrder, b.Group))
+		}
+		return cmp.Compare(b.waitHours, a.waitHours)
 	})
 	return v
 }
 
-func mineCard(task *watch.Task, mr *watch.MR, cfg *config.Config) Card {
+type builder struct {
+	policy domain.Policy
+	mutes  domain.MuteRules
+	now    time.Time
+}
+
+func taskCard(task *domain.Task) Card {
+	return Card{
+		Key:        "task:" + task.ID,
+		Group:      GroupNoMR,
+		Mine:       true,
+		Title:      task.Summary,
+		URL:        task.URL,
+		IssueID:    task.ID,
+		IssueURL:   task.URL,
+		IssueState: task.State,
+		Reviewers:  []Person{},
+		Release:    []string{},
+		Badges:     []Badge{},
+	}
+}
+
+// own — карточка твоего MR; task — его таска или nil для сироты.
+func (b builder) own(task *domain.Task, mr *domain.MR) Card {
 	c := baseCard(mr)
 	c.Mine = true
 	if task != nil {
-		c.IssueID = task.Issue.ID
+		c.IssueID = task.ID
 		c.IssueURL = task.URL
 		c.IssueState = task.State
 	}
 
-	if mr.State == "merged" {
-		c.Group = GroupMerged
-		return c
-	}
-
-	if c.Pipeline == "red" {
-		c.Badges = append(c.Badges, Badge{"Сборка упала", "red"})
-	}
-	for _, r := range c.Reviewers {
-		if r.Decision == DecisionChanges {
-			c.Badges = append(c.Badges, Badge{"Изменения запрошены", "red"})
-			break
+	stage := b.policy.OwnStage(task, mr)
+	switch stage {
+	case domain.StageNeedsWork:
+		for _, pr := range b.policy.Problems(mr) {
+			c.Badges = append(c.Badges, problemBadge(pr))
 		}
-	}
-	if !mr.BlockingDiscussionsResolved {
-		c.Badges = append(c.Badges, Badge{"Нерешённые треды", "yellow"})
-	}
-	if mr.HasConflicts {
-		c.Badges = append(c.Badges, Badge{"Конфликты", "red"})
-	}
-	// Отставание от target — настройка: с какого порога считать MR проблемой.
-	if n := cfg.Rules.MRBehindCommits; n > 0 && mr.DivergedCommitsCount >= n {
-		c.Badges = append(c.Badges, Badge{"Отстаёт на " + pluralCommits(mr.DivergedCommitsCount), "yellow"})
-	}
-
-	switch {
-	case len(c.Badges) > 0:
-		c.Group = GroupWork
-	case task != nil && mr.Approvals >= cfg.Rules.RequiredApprovals &&
-		strings.EqualFold(task.State, cfg.Rules.ReviewState):
-		c.Group = GroupReady
-		if cfg.Rules.NextCommand != "" {
-			c.Action = &Action{Label: actionLabel(cfg.Rules.NextCommand), IssueID: task.Issue.ID}
+	case domain.StageReady:
+		if b.policy.CanTransition() {
+			c.Action = &Action{Label: actionLabel(b.policy.NextCommand), IssueID: task.ID}
 		}
-	default:
-		c.Group = GroupWaiting
-		c.Wait, c.waitHours = wait(mr)
+	case domain.StageWaiting:
+		c.Wait, c.waitHours = wait(mr, b.now)
+	}
+	b.place(&c, mr, stage)
+	return c
+}
+
+// review — карточка чужого MR, где ты ревьюер.
+func (b builder) review(mr *domain.MR) Card {
+	c := baseCard(mr)
+	c.Review = true
+	c.Wait, c.waitHours = wait(mr, b.now)
+	b.place(&c, mr, b.policy.ReviewStage(mr))
+	return c
+}
+
+// place кладёт карточку в группу её стадии, а заглушенную — в «Заглушено»:
+// она скрыта от рабочих вкладок, но видна во вкладке «Все», откуда её можно вернуть.
+func (b builder) place(c *Card, mr *domain.MR, stage domain.Stage) {
+	until, muted := b.mutes.Match(mr, b.now)
+	if !muted {
+		c.Group = stageGroup[stage]
+		c.needsMe = stage.NeedsMe()
+		return
+	}
+	c.Group = GroupMuted
+	c.Muted = true
+	if !until.IsZero() {
+		c.MutedUntil = until.Format(time.RFC3339)
+	}
+}
+
+func baseCard(mr *domain.MR) Card {
+	c := Card{
+		Key:       domain.MRKey(mr.ID),
+		Title:     mr.Title,
+		URL:       mr.WebURL,
+		Author:    person(mr.Author),
+		Reviewers: reviewers(mr),
+		Behind:    mr.Behind,
+		Comments:  mr.Comments,
+		Release:   append([]string{}, mr.ReleaseBranches...),
+		Badges:    []Badge{},
+		Pipeline:  pipelineTone(mr.Pipeline),
+	}
+	if mr.Pipeline != nil {
+		c.PipelineURL = mr.Pipeline.WebURL
 	}
 	return c
 }
 
-func reviewCard(mr *watch.MR, cfg *config.Config) Card {
-	c := baseCard(mr)
-	c.Review = true
-	c.Group = GroupReview
-	c.Wait, c.waitHours = wait(mr)
-	for _, r := range c.Reviewers {
-		if r.Username == cfg.GitLab.Username && r.Decision != DecisionPending {
-			c.Group = GroupWaiting
+func problemBadge(pr domain.Problem) Badge {
+	switch pr.Kind {
+	case domain.ProblemPipelineFailed:
+		return Badge{"Сборка упала", ToneRed}
+	case domain.ProblemChangesRequested:
+		return Badge{"Изменения запрошены", ToneRed}
+	case domain.ProblemUnresolvedThreads:
+		return Badge{"Нерешённые треды", ToneYellow}
+	case domain.ProblemConflicts:
+		return Badge{"Конфликты", ToneRed}
+	case domain.ProblemBehind:
+		return Badge{"Отстаёт на " + pluralCommits(pr.Behind), ToneYellow}
+	}
+	return Badge{"Проблема", ToneYellow}
+}
+
+func reviewers(mr *domain.MR) []Person {
+	out := []Person{}
+	seen := map[string]bool{}
+	for _, r := range mr.Reviewers {
+		p := person(r.User)
+		p.Decision = decisionName(mr.DecisionOf(r.User.Username))
+		out = append(out, *p)
+		seen[r.User.Username] = true
+	}
+	// Апрувнуть может и не назначенный ревьюер
+	for _, u := range mr.ApprovedBy {
+		if !seen[u] {
+			p := person(domain.User{Username: u})
+			p.Decision = DecisionApproved
+			out = append(out, *p)
 		}
 	}
-	return c
+	return out
+}
+
+func person(u domain.User) *Person {
+	return &Person{Username: u.Username, Name: u.Name, Initials: initials(u.Username, u.Name)}
+}
+
+func decisionName(d domain.ReviewDecision) string {
+	switch d {
+	case domain.DecisionApproved:
+		return DecisionApproved
+	case domain.DecisionChanges:
+		return DecisionChanges
+	default:
+		return DecisionPending
+	}
+}
+
+func pipelineTone(p *domain.Pipeline) string {
+	switch p.Outcome() {
+	case domain.OutcomeSuccess:
+		return ToneGreen
+	case domain.OutcomeFailed:
+		return ToneRed
+	case domain.OutcomeRunning:
+		return ToneYellow
+	default:
+		return ""
+	}
 }
 
 // pluralCommits — «1 коммит / 2 коммита / 17 коммитов» для бейджа отставания.
@@ -230,56 +312,6 @@ func pluralCommits(n int) string {
 	default:
 		return strconv.Itoa(n) + " коммитов"
 	}
-}
-
-func baseCard(mr *watch.MR) Card {
-	c := Card{
-		Key:       "mr:" + strconv.Itoa(mr.ID),
-		Title:     mr.Title,
-		URL:       mr.WebURL,
-		Author:    person(mr.Author.Username, mr.Author.Name),
-		Reviewers: reviewers(mr),
-		Behind:    mr.DivergedCommitsCount,
-		Comments:  mr.UserNotesCount,
-		Release:   append([]string{}, mr.ReleaseBranches...),
-		Badges:    []Badge{},
-	}
-	if p := mr.HeadPipeline; p != nil {
-		c.Pipeline = pipelineTone(p.Status)
-		c.PipelineURL = p.WebURL
-	}
-	return c
-}
-
-func reviewers(mr *watch.MR) []Person {
-	out := []Person{}
-	seen := map[string]bool{}
-	for _, r := range mr.Reviewers {
-		p := person(r.User.Username, r.User.Name)
-		switch {
-		case mr.IsApprovedBy(r.User.Username) || r.State == "approved":
-			p.Decision = DecisionApproved
-		case r.State == "requested_changes":
-			p.Decision = DecisionChanges
-		default:
-			p.Decision = DecisionPending
-		}
-		out = append(out, *p)
-		seen[r.User.Username] = true
-	}
-	// Апрувнуть может и не назначенный ревьюер
-	for _, u := range mr.ApprovedBy {
-		if !seen[u] {
-			p := person(u, "")
-			p.Decision = DecisionApproved
-			out = append(out, *p)
-		}
-	}
-	return out
-}
-
-func person(username, name string) *Person {
-	return &Person{Username: username, Name: name, Initials: initials(username, name)}
 }
 
 func initials(username, name string) string {
@@ -302,11 +334,11 @@ func initials(username, name string) string {
 
 // wait — сколько времени открыт MR в формате "2д 5ч"; пусто, если он не открыт
 // или открыт меньше часа — такое молодое ожидание ещё не заслуживает бейджа.
-func wait(mr *watch.MR) (string, int) {
-	if mr.State != "opened" || mr.CreatedAt.IsZero() {
+func wait(mr *domain.MR, now time.Time) (string, int) {
+	if !mr.Open() || mr.CreatedAt.IsZero() {
 		return "", 0
 	}
-	h := int(time.Since(mr.CreatedAt).Hours())
+	h := int(now.Sub(mr.CreatedAt).Hours())
 	switch {
 	case h >= 24:
 		return fmt.Sprintf("%dд %dч", h/24, h%24), h
@@ -314,19 +346,6 @@ func wait(mr *watch.MR) (string, int) {
 		return fmt.Sprintf("%dч", h), h
 	}
 	return "", 0
-}
-
-func pipelineTone(status string) string {
-	switch status {
-	case "success":
-		return "green"
-	case "failed", "canceled":
-		return "red"
-	case "skipped", "":
-		return ""
-	default:
-		return "yellow"
-	}
 }
 
 // actionLabel: "State Ready for QA" → "Ready for QA"

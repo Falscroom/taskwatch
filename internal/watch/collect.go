@@ -1,70 +1,32 @@
-// Package watch собирает состояние тасок из YouTrack и связанных MR из GitLab в один снапшот.
+// Package watch собирает таски из YouTrack и связанные MR из GitLab в один доменный снапшот.
 package watch
 
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	"taskwatch/internal/config"
+	"taskwatch/internal/domain"
 	"taskwatch/internal/gitlab"
 	"taskwatch/internal/youtrack"
 )
-
-var issueKeyRe = regexp.MustCompile(`(?i)\b([a-z][a-z0-9]+-\d+)\b`)
-
-type MR struct {
-	gitlab.MergeRequest
-	Approvals       int
-	ApprovedBy      []string
-	Reviewers       []gitlab.Reviewer
-	Notes           []gitlab.Note
-	ReleaseBranches []string
-}
-
-type Task struct {
-	Issue    youtrack.Issue
-	State    string
-	URL      string
-	Comments []youtrack.Comment
-	MRs      []*MR
-}
-
-type Snapshot struct {
-	Tasks []*Task
-	// MR без таски из спринта — тоже показываем в статусе
-	Orphans []*MR
-	// MR других людей, где ты ревьюер
-	Reviews []*MR
-}
-
-// AllMRs — все MR снапшота в одном списке: для обходов, которым не важно происхождение.
-func (s *Snapshot) AllMRs() []*MR {
-	out := make([]*MR, 0, len(s.Orphans)+len(s.Reviews))
-	for _, t := range s.Tasks {
-		out = append(out, t.MRs...)
-	}
-	out = append(out, s.Orphans...)
-	out = append(out, s.Reviews...)
-	return out
-}
 
 type Collector struct {
 	cfg *config.Config
 	gl  *gitlab.Client
 	yt  *youtrack.Client
 	// byIssue — таски последнего прохода; нужен, только если настроен YouTrack
-	byIssue map[string]*Task
+	byIssue map[string]*domain.Task
 }
 
 func NewCollector(cfg *config.Config, gl *gitlab.Client, yt *youtrack.Client) *Collector {
 	return &Collector{cfg: cfg, gl: gl, yt: yt}
 }
 
-func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
-	snap := &Snapshot{}
+func (c *Collector) Collect(ctx context.Context) (*domain.Snapshot, error) {
+	snap := &domain.Snapshot{}
 
 	// Сервисы независимы: опрашиваем только настроенные, остальное потом.
 	if c.cfg.YouTrackOK() {
@@ -80,23 +42,18 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 	return snap, nil
 }
 
-func (c *Collector) collectIssues(ctx context.Context, snap *Snapshot) error {
+func (c *Collector) collectIssues(ctx context.Context, snap *domain.Snapshot) error {
 	issues, err := c.yt.Issues(ctx, c.cfg.YouTrack.Query)
 	if err != nil {
 		return err
 	}
-	byID := make(map[string]*Task, len(issues))
+	byID := make(map[string]*domain.Task, len(issues))
 	for _, issue := range issues {
 		comments, err := c.yt.Comments(ctx, issue.ID)
 		if err != nil {
 			return err
 		}
-		task := &Task{
-			Issue:    issue,
-			State:    issue.Field("State"),
-			URL:      c.yt.IssueURL(issue.ID),
-			Comments: comments,
-		}
+		task := toTask(issue, c.yt.IssueURL(issue.ID), comments)
 		snap.Tasks = append(snap.Tasks, task)
 		byID[issue.ID] = task
 	}
@@ -104,21 +61,21 @@ func (c *Collector) collectIssues(ctx context.Context, snap *Snapshot) error {
 	return nil
 }
 
-func (c *Collector) collectMRs(ctx context.Context, snap *Snapshot) error {
+func (c *Collector) collectMRs(ctx context.Context, snap *domain.Snapshot) error {
 	since := time.Now().Add(-c.cfg.Rules.MRLookback)
 	mrs, err := c.gl.MyMergeRequests(ctx, c.cfg.GitLab.Username, since)
 	if err != nil {
 		return err
 	}
 	for _, item := range mrs {
-		if item.State == "closed" || c.skipDraft(item) {
+		if domain.MRState(item.State) == domain.MRClosed || c.skipDraft(item) {
 			continue
 		}
 		mr, err := c.loadMR(ctx, item)
 		if err != nil {
 			return err
 		}
-		if task, ok := c.byIssue[issueKey(item)]; ok {
+		if task, ok := c.byIssue[domain.IssueKey(item.SourceBranch, item.Title)]; ok {
 			task.MRs = append(task.MRs, mr)
 		} else {
 			snap.Orphans = append(snap.Orphans, mr)
@@ -148,20 +105,20 @@ func (c *Collector) skipDraft(item gitlab.MergeRequest) bool {
 	return c.cfg.Rules.ExcludeDraft && item.Draft
 }
 
-func (c *Collector) loadMR(ctx context.Context, item gitlab.MergeRequest) (*MR, error) {
+func (c *Collector) loadMR(ctx context.Context, item gitlab.MergeRequest) (*domain.MR, error) {
 	full, err := c.gl.MergeRequest(ctx, item.ProjectID, item.IID)
 	if err != nil {
 		return nil, err
 	}
-	mr := &MR{MergeRequest: full}
+	mr := toMR(full)
 
 	// Смёрженный уже ничего не меняется: апрувы, ревьюеры и комментарии бесполезны.
 	// Нужны только sha и релизные ветки из него — минус 3 запроса на каждый за тик.
-	if full.State == "merged" {
+	if mr.Merged() {
 		if c.cfg.Rules.ReleaseBranchPrefix == "" {
 			return mr, nil
 		}
-		sha := mr.MergedSHA()
+		sha := full.MergedSHA()
 		if sha == "" {
 			return mr, nil
 		}
@@ -184,34 +141,17 @@ func (c *Collector) loadMR(ctx context.Context, item gitlab.MergeRequest) (*MR, 
 	for _, a := range approvals.ApprovedBy {
 		mr.ApprovedBy = append(mr.ApprovedBy, a.User.Username)
 	}
-	mr.Approvals = len(mr.ApprovedBy)
 
-	if mr.Reviewers, err = c.gl.Reviewers(ctx, full.ProjectID, full.IID); err != nil {
+	reviewers, err := c.gl.Reviewers(ctx, full.ProjectID, full.IID)
+	if err != nil {
 		return nil, err
 	}
+	mr.Reviewers = toReviewers(reviewers)
 
-	if mr.Notes, err = c.gl.Notes(ctx, full.ProjectID, full.IID); err != nil {
+	notes, err := c.gl.Notes(ctx, full.ProjectID, full.IID)
+	if err != nil {
 		return nil, err
 	}
+	mr.Notes = toNotes(notes)
 	return mr, nil
-}
-
-// IsApprovedBy сообщает, апрувнул ли пользователь MR.
-func (mr *MR) IsApprovedBy(username string) bool {
-	for _, u := range mr.ApprovedBy {
-		if u == username {
-			return true
-		}
-	}
-	return false
-}
-
-// issueKey достаёт APP-1234 из имени ветки, а если там нет — из заголовка MR.
-func issueKey(mr gitlab.MergeRequest) string {
-	for _, s := range []string{mr.SourceBranch, mr.Title} {
-		if m := issueKeyRe.FindStringSubmatch(s); m != nil {
-			return strings.ToUpper(m[1])
-		}
-	}
-	return ""
 }

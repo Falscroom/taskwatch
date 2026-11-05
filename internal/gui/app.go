@@ -82,7 +82,7 @@ func Run(eng *engine.Engine, configPath string) error {
 	eng.OnUpdate = func() {
 		snap, updated, err := eng.Snapshot()
 		label := ""
-		if n := view.Build(snap, updated, err, eng.Config(), eng.Mutes()).NeedsYou; n > 0 {
+		if n := view.Build(snap, updated, err, eng.Config().Policy(), eng.Mutes()).NeedsYou; n > 0 {
 			label = strconv.Itoa(n)
 		}
 		tray.SetLabel(label)

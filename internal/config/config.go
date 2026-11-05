@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"taskwatch/internal/domain"
 	"taskwatch/internal/keychain"
 
 	"gopkg.in/yaml.v3"
@@ -167,6 +168,18 @@ func Save(path string, cfg *Config) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// Policy — правила и «кто я» в виде, в котором их понимает домен.
+func (c *Config) Policy() domain.Policy {
+	return domain.Policy{
+		GitLabUser:        c.GitLab.Username,
+		YouTrackUser:      c.YouTrack.Login,
+		RequiredApprovals: c.Rules.RequiredApprovals,
+		ReviewState:       c.Rules.ReviewState,
+		NextCommand:       c.Rules.NextCommand,
+		BehindThreshold:   c.Rules.MRBehindCommits,
+	}
 }
 
 // GitLabOK — сервис заполнен целиком, его можно опрашивать.

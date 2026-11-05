@@ -5,10 +5,13 @@ package state
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"taskwatch/internal/domain"
 )
 
 const retention = 90 * 24 * time.Hour
@@ -92,19 +95,12 @@ func (s *Store) Unmute(key string) {
 	delete(s.mutes, key)
 }
 
-// Mutes — копия заглушений. Активные: until zero или в будущем, проверка через Active.
-func (s *Store) Mutes() map[string]time.Time {
+// Mutes — копия заглушений, в том числе ещё не вычищенных истёкших.
+func (s *Store) Mutes() domain.MuteRules {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make(map[string]time.Time, len(s.mutes))
-	for k, t := range s.mutes {
-		out[k] = t
-	}
-	return out
+	return maps.Clone(domain.MuteRules(s.mutes))
 }
-
-// Active — действует ли заглушение until на момент now.
-func Active(until, now time.Time) bool { return until.IsZero() || until.After(now) }
 
 // Counts — размеры последнего принятого снапшота (см. file.Counts).
 func (s *Store) Counts() Counts {
@@ -131,7 +127,7 @@ func (s *Store) Save() error {
 		}
 	}
 	for k, until := range s.mutes {
-		if !Active(until, time.Now()) {
+		if !domain.MuteActive(until, time.Now()) {
 			delete(s.mutes, k)
 		}
 	}

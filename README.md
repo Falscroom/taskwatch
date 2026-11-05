@@ -39,6 +39,11 @@ taskwatch [-config path] [-addr host:port] <command>
 ```
 cmd/taskwatch/     точка входа и CLI
 internal/          весь код приложения
+  domain/          модель и бизнес-правила (Policy, MuteRules); ничего не импортирует
+  watch/           сбор снапшота из GitLab и YouTrack, перевод в domain
+  rules/           события для уведомлений
+  view/            карточки окна
+  engine/          цикл опроса, дедуп и отправка уведомлений
   gui/frontend/    окно: HTML/CSS/JS без сборщика, встраивается в бинарь
 packaging/         install.sh, uninstall.sh, plist LaunchAgent, README для коллег
 ```
