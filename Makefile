@@ -6,13 +6,18 @@ export MACOSX_DEPLOYMENT_TARGET := 14.0
 export CGO_CFLAGS := -mmacosx-version-min=14.0
 export CGO_LDFLAGS := -mmacosx-version-min=14.0
 
-.PHONY: build test vet lint fmt check status install uninstall dist clean
+.PHONY: build test test-frontend vet lint fmt check demo status install uninstall dist clean
 
 build:
 	go build -ldflags "-s -w" -trimpath -o $(BIN) ./cmd/taskwatch
 
 test:
 	go test ./...
+
+# test-frontend — тесты чистых JS-модулей окна; нужен node, без него пропускаются.
+test-frontend:
+	@if command -v node >/dev/null; then cd internal/ui/frontend && node --test 'test/*.test.js'; \
+	else echo "node не найден — тесты фронтенда пропущены"; fi
 
 vet:
 	go vet ./...
@@ -24,7 +29,12 @@ fmt:
 	gofmt -w cmd internal
 
 # check — всё, что должно быть зелёным перед коммитом.
-check: vet lint test
+check: vet lint test test-frontend
+
+# demo — окно в браузере на поддельных GitLab и YouTrack с примерами карточек:
+# для работы над фронтендом без настоящих аккаунтов.
+demo:
+	go run ./cmd/taskwatch-demo
 
 status: build
 	./$(BIN) status

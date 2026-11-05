@@ -7,11 +7,13 @@
 
 ## Сборка и проверка
 
-Нужны Go 1.26+, Xcode Command Line Tools и (для `make lint`) golangci-lint.
+Нужны Go 1.26+, Xcode Command Line Tools, golangci-lint (для `make lint`) и node
+(для тестов фронтенда; без него они пропускаются).
 
 ```bash
 make build    # bin/taskwatch
-make check    # vet + lint + test — должно быть зелёным перед коммитом
+make check    # vet + lint + test + тесты фронтенда — должно быть зелёным перед коммитом
+make demo     # окно в браузере на поддельных GitLab/YouTrack с примерами карточек
 make dist     # dist/taskwatch-mac.zip для раздачи
 make install  # поставить себе как LaunchAgent
 ```
@@ -35,10 +37,20 @@ taskwatch [-config path] [-addr host:port] <command>
 (env главнее Связки ключей). Режим `web` отвечает только на loopback-адреса.
 Рядом с конфигом — `state.json` (отправленные уведомления, заглушения) и лог.
 
+## Окно
+
+`internal/ui/frontend` — без сборщика и зависимостей: `index.html`, `app.css` и ES-модули.
+Все клики идут через один делегированный обработчик: элемент помечен `data-action="имя"`,
+а `js/actions.js` знает, что это имя делает. Карточки рисуют чистые функции
+(`js/cards.js`), форма настроек описана таблицей полей (`js/form.js`) — одной и для
+заполнения, и для чтения. Вид держит свежим long-poll `GET /api/view?after=<version>`.
+Модули помечены `// @ts-check` с JSDoc-типами — редактор проверяет их как TypeScript.
+
 ## Раскладка
 
 ```
 cmd/taskwatch/     точка входа и таблица команд CLI
+cmd/taskwatch-demo/  демо окна на поддельных данных (make demo)
 internal/          весь код приложения
   domain/          модель и бизнес-правила (Policy, MuteRules); ничего не импортирует
   collect/         сбор снапшота через порты TaskSource/MRSource, параллельная догрузка
@@ -52,7 +64,8 @@ internal/          весь код приложения
   platform/        macOS: Связка ключей, уведомления; атомарная запись файлов
   ui/httpapi/      HTTP API окна (тонкие хендлеры, long-poll /api/view) и сервер режима web
   ui/tray/         меню-бар на Wails: иконка, окно, цифра «нужно тебе»
-  ui/frontend/     окно: HTML/CSS/JS без сборщика, встраивается в бинарь
+  ui/frontend/     окно: HTML/CSS и ES-модули в js/ без сборщика, встраивается в бинарь;
+                   тесты чистых модулей — test/, запускает node (make test-frontend)
   testutil/        поддельные GitLab/YouTrack и хранилище секретов для тестов
 packaging/         install.sh, uninstall.sh, plist LaunchAgent, README для коллег
 ```

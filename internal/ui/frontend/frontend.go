@@ -1,4 +1,5 @@
-// Package frontend — окно taskwatch: HTML, CSS и JS без сборщика, встроенные в бинарь.
+// Package frontend — окно taskwatch: HTML, CSS и ES-модули в js/ без сборщика,
+// встроенные в бинарь. Тесты чистых модулей — в test/, запускаются node (make test-frontend).
 package frontend
 
 import (
@@ -6,7 +7,7 @@ import (
 	"io/fs"
 )
 
-//go:embed index.html app.css app.js
+//go:embed index.html app.css js
 var files embed.FS
 
 // FS — файлы окна.

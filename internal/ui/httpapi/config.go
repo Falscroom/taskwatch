@@ -24,6 +24,10 @@ func (a *api) saveConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !cfg.Configured() {
+		writeError(w, http.StatusBadRequest, "Заполни хотя бы один сервис целиком — второй можно позже")
+		return
+	}
 	if err := a.settings.Save(cur, cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

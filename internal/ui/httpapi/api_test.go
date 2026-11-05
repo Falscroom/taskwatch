@@ -394,6 +394,16 @@ func TestDisableService(t *testing.T) {
 	}
 }
 
+// Сохранить настройки, где ни один сервис не заполнен целиком, нельзя: окно
+// осталось бы без данных. Проверку раньше дублировал JS.
+func TestSaveConfigNeedsOneService(t *testing.T) {
+	h := newAPI(t, nil)
+	rec := h.do(t, http.MethodPost, "/api/config", map[string]any{"pollInterval": "2m"})
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "хотя бы один сервис") {
+		t.Errorf("status = %d (%s)", rec.Code, rec.Body)
+	}
+}
+
 func TestConfigTest(t *testing.T) {
 	srv := fakeapi.New(t)
 	srv.GitLabUser = "gl-me"

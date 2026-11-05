@@ -1,5 +1,6 @@
 // Package fakeapi — поддельные GitLab и YouTrack на одном httptest-сервере для
-// тестов сборщика, движка и HTTP API. Отдаёт заданные данные и запоминает запросы.
+// тестов сборщика, движка и HTTP API и для демо-режима (cmd/taskwatch-demo).
+// Отдаёт заданные данные и запоминает запросы.
 // GitLab живёт под /api/v4, YouTrack — под /api и /users, так что URL у них общий.
 package fakeapi
 
@@ -57,9 +58,15 @@ type Server struct {
 
 // New запускает сервер; он остановится сам в конце теста.
 func New(t testing.TB) *Server {
+	s := Start()
+	t.Cleanup(s.Close)
+	return s
+}
+
+// Start запускает сервер вне теста (демо-режим); остановить — Close.
+func Start() *Server {
 	s := &Server{GitLabUser: "me", YouTrackLogin: "me"}
 	s.Server = httptest.NewServer(s.routes())
-	t.Cleanup(s.Close)
 	return s
 }
 
