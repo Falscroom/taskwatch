@@ -98,6 +98,9 @@ type Card struct {
 }
 
 type View struct {
+	// Version — версия движка, из которой собран вид; окно присылает её в
+	// long-poll, чтобы дождаться следующей.
+	Version   uint64    `json:"version"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	Error     string    `json:"error,omitempty"`
 	NeedsYou  int       `json:"needsYou"`

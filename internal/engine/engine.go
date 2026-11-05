@@ -56,6 +56,7 @@ type Engine struct {
 	subsMu  sync.Mutex
 	subs    map[int]func()
 	nextSub int
+	version atomic.Uint64 // растёт с каждым publish
 
 	guard glitchGuard // только из Tick
 }
@@ -90,7 +91,38 @@ func (e *Engine) Subscribe(fn func()) (unsubscribe func()) {
 	}
 }
 
+// Version — номер последнего обновления: растёт после каждого прохода опроса
+// и смены заглушений. По нему окно понимает, что вид устарел.
+func (e *Engine) Version() uint64 { return e.version.Load() }
+
+// WaitUpdate ждёт, пока версия станет отличной от seen, или пока не кончится ctx;
+// возвращает текущую версию. Отличной, а не большей: после рестарта счёт идёт
+// заново, и клиент со старой версией не должен ждать.
+func (e *Engine) WaitUpdate(ctx context.Context, seen uint64) uint64 {
+	if v := e.version.Load(); v != seen {
+		return v
+	}
+	updated := make(chan struct{}, 1)
+	unsubscribe := e.Subscribe(func() {
+		select {
+		case updated <- struct{}{}:
+		default:
+		}
+	})
+	defer unsubscribe()
+	// Обновление могло проскочить между первой проверкой и подпиской.
+	if v := e.version.Load(); v != seen {
+		return v
+	}
+	select {
+	case <-updated:
+	case <-ctx.Done():
+	}
+	return e.version.Load()
+}
+
 func (e *Engine) publish() {
+	e.version.Add(1)
 	e.subsMu.Lock()
 	fns := make([]func(), 0, len(e.subs))
 	for _, fn := range e.subs {

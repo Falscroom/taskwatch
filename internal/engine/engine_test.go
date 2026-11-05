@@ -546,3 +546,42 @@ func TestGlitchGuard(t *testing.T) {
 		t.Error("reset must drop the pending confirmation")
 	}
 }
+
+func TestWaitUpdate(t *testing.T) {
+	h := newHarness(t, false, nil)
+	v0 := h.eng.Version()
+
+	// Версия уже другая — без ожидания.
+	if got := h.eng.WaitUpdate(context.Background(), v0+100); got != v0 {
+		t.Errorf("stale client: got %d, want %d immediately", got, v0)
+	}
+
+	done := make(chan uint64)
+	go func() { done <- h.eng.WaitUpdate(context.Background(), v0) }()
+	select {
+	case <-done:
+		t.Fatal("returned before any update")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if err := h.eng.Mute("mr:1", "", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-done:
+		if got != v0+1 {
+			t.Errorf("version = %d, want %d", got, v0+1)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("update did not wake the waiter")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if got := h.eng.WaitUpdate(ctx, h.eng.Version()); got != v0+1 {
+		t.Errorf("timeout: got %d", got)
+	}
+	h.tick(t)
+	if h.eng.Version() != v0+2 {
+		t.Errorf("tick must bump the version: %d", h.eng.Version())
+	}
+}

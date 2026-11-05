@@ -38,7 +38,7 @@ taskwatch [-config path] [-addr host:port] <command>
 ## Раскладка
 
 ```
-cmd/taskwatch/     точка входа и CLI
+cmd/taskwatch/     точка входа и таблица команд CLI
 internal/          весь код приложения
   domain/          модель и бизнес-правила (Policy, MuteRules); ничего не импортирует
   collect/         сбор снапшота через порты TaskSource/MRSource, параллельная догрузка
@@ -50,8 +50,9 @@ internal/          весь код приложения
   settings/        загрузка конфига с токенами, сохранение формы, проверка связи
   integrations/    GitLab и YouTrack: клиенты поверх общего httpx и источники для collect
   platform/        macOS: Связка ключей, уведомления; атомарная запись файлов
-  gui/             меню-бар (Wails) и HTTP API окна
-  gui/frontend/    окно: HTML/CSS/JS без сборщика, встраивается в бинарь
+  ui/httpapi/      HTTP API окна (тонкие хендлеры, long-poll /api/view) и сервер режима web
+  ui/tray/         меню-бар на Wails: иконка, окно, цифра «нужно тебе»
+  ui/frontend/     окно: HTML/CSS/JS без сборщика, встраивается в бинарь
   testutil/        поддельные GitLab/YouTrack и хранилище секретов для тестов
 packaging/         install.sh, uninstall.sh, plist LaunchAgent, README для коллег
 ```

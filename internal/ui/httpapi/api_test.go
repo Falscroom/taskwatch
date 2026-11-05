@@ -1,12 +1,13 @@
-package gui
+package httpapi
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"image/png"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -57,7 +58,7 @@ func newAPI(t *testing.T, cfg *config.Config) *apiHarness {
 	h := &apiHarness{eng: eng, configPath: path, secrets: fakesecrets.New(nil)}
 	assets := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "asset:"+r.URL.Path) })
 	svc := settings.New(path, h.secrets)
-	h.handler = newHandler(eng, svc, assets, func(u string) error { h.opened = append(h.opened, u); return nil })
+	h.handler = Handler(eng, svc, func(u string) error { h.opened = append(h.opened, u); return nil }, assets)
 	return h
 }
 
@@ -466,12 +467,99 @@ func TestGuardOriginRejectsForeignHost(t *testing.T) {
 	}
 }
 
-func TestTrayIcon(t *testing.T) {
-	img, err := png.Decode(bytes.NewReader(trayIcon()))
+func viewVersion(t *testing.T, rec *httptest.ResponseRecorder) uint64 {
+	t.Helper()
+	var v struct {
+		Version uint64 `json:"version"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+		t.Fatalf("view: %v (%s)", err, rec.Body)
+	}
+	return v.Version
+}
+
+func TestViewLongPoll(t *testing.T) {
+	h := newAPI(t, nil)
+	v0 := viewVersion(t, h.do(t, http.MethodGet, "/api/view", nil))
+
+	// Клиент со старой версией получает ответ сразу.
+	if v := viewVersion(t, h.do(t, http.MethodGet, fmt.Sprintf("/api/view?after=%d", v0+7), nil)); v != v0 {
+		t.Errorf("stale client: version %d, want %d", v, v0)
+	}
+
+	// С текущей версией ответ ждёт обновления.
+	done := make(chan uint64, 1)
+	go func() { done <- viewVersion(t, h.do(t, http.MethodGet, fmt.Sprintf("/api/view?after=%d", v0), nil)) }()
+	select {
+	case <-done:
+		t.Fatal("long-poll answered before any update")
+	case <-time.After(30 * time.Millisecond):
+	}
+	h.do(t, http.MethodPost, "/api/mute", map[string]any{"key": "mr:1"})
+	select {
+	case v := <-done:
+		if v != v0+1 {
+			t.Errorf("version after mute = %d, want %d", v, v0+1)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("mute did not wake the long-poll")
+	}
+
+	if rec := h.do(t, http.MethodGet, "/api/view?after=soon", nil); rec.Code != 400 {
+		t.Errorf("bad after: %d", rec.Code)
+	}
+}
+
+func TestViewLongPollTimeout(t *testing.T) {
+	old := longPoll
+	longPoll = 20 * time.Millisecond
+	t.Cleanup(func() { longPoll = old })
+	h := newAPI(t, nil)
+	v0 := viewVersion(t, h.do(t, http.MethodGet, "/api/view", nil))
+	started := time.Now()
+	if v := viewVersion(t, h.do(t, http.MethodGet, fmt.Sprintf("/api/view?after=%d", v0), nil)); v != v0 {
+		t.Errorf("version = %d", v)
+	}
+	if d := time.Since(started); d < 20*time.Millisecond || d > 2*time.Second {
+		t.Errorf("long-poll took %v, want about longPoll", d)
+	}
+}
+
+func TestServe(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b := img.Bounds(); b.Dx() != 36 || b.Dy() != 36 {
-		t.Errorf("icon size = %v, want 36×36", b)
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, addr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "ok") }))
+	}()
+
+	var resp *http.Response
+	for i := 0; i < 100; i++ {
+		if resp, err = http.Get("http://" + addr + "/"); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(body) != "ok" {
+		t.Errorf("body = %q", body)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not stop")
 	}
 }

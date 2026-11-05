@@ -174,12 +174,25 @@ function render() {
   $("list").innerHTML = html;
 }
 
-async function refreshView() {
-  try {
-    state.view = await api("/api/view");
-    render();
-  } catch (e) {
-    toast(e.message);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// watchView держит вид свежим: long-poll /api/view?after=<version> отвечает,
+// как только у движка новая версия (прошёл опрос, сменились заглушения), — так
+// результат любого действия приходит сам, без опроса по таймеру.
+async function watchView() {
+  let failing = false;
+  for (;;) {
+    try {
+      const after = state.view ? `?after=${state.view.version}` : "";
+      state.view = await api("/api/view" + after);
+      failing = false;
+      $("refresh").classList.remove("spinning");
+      render();
+    } catch (e) {
+      if (!failing) toast(e.message); // о пропаже связи — один раз, а не каждые 5 секунд
+      failing = true;
+      await sleep(5000);
+    }
   }
 }
 
@@ -191,12 +204,12 @@ $("tabs").addEventListener("click", (e) => {
   render();
 });
 
+// Крутилка останавливается, когда watchView получит итог внеочередного опроса.
 $("refresh").addEventListener("click", async () => {
   const btn = $("refresh");
   btn.classList.add("spinning");
   try {
     await api("/api/refresh", {});
-    setTimeout(async () => { await refreshView(); btn.classList.remove("spinning"); }, 2500);
   } catch (e) {
     btn.classList.remove("spinning");
     toast(e.message);
@@ -219,7 +232,6 @@ $("list").addEventListener("click", async (e) => {
     try {
       await api("/api/transition", { issueId: action.dataset.transition });
       action.textContent = "Переведена ✓";
-      setTimeout(refreshView, 2500);
     } catch (err) {
       action.disabled = false;
       toast(`Не удалось перевести: ${err.message}`);
@@ -249,7 +261,6 @@ $("list").addEventListener("click", async (e) => {
         title: unmute.closest(".card")?.querySelector(".card-title")?.textContent || "",
       });
       toast("Вернул карточку");
-      refreshView();
     } catch (err) {
       unmute.disabled = false;
       toast(err.message);
@@ -281,7 +292,6 @@ $("mute-options").addEventListener("click", async (e) => {
     });
     $("mute").hidden = true;
     toast(Number(b.dataset.hours) ? "Заглушено" : "Заглушено навсегда");
-    refreshView();
   } catch (err) {
     toast(err.message);
   } finally {
@@ -291,8 +301,9 @@ $("mute-options").addEventListener("click", async (e) => {
   }
 });
 
-window.addEventListener("focus", refreshView);
-setInterval(refreshView, 5000);
+// Данные приходят через watchView; таймер только обновляет «N мин назад».
+window.addEventListener("focus", render);
+setInterval(render, 30000);
 
 // --- настройки ---
 
@@ -397,7 +408,6 @@ $("settings-form").addEventListener("submit", async (e) => {
     state.settings.cfg = await api("/api/config");
     closeSettings();
     toast("Настройки сохранены");
-    setTimeout(refreshView, 1500);
   } catch (err) {
     toast(err.message);
   } finally {
@@ -426,7 +436,7 @@ async function boot() {
   } catch (e) {
     toast(e.message);
   }
-  refreshView();
+  watchView();
 }
 
 boot();
