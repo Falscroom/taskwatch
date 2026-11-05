@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" id="viewport" content="width=device-width, initial-scale=1">
+  <title>taskwatch</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <main class="panel">
+    <header class="head">
+      <div class="title">
+        <h1>Таски</h1>
+        <button class="refresh" id="refresh" title="Обновить">
+          <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+          <span id="updated">…</span>
+        </button>
+        <button class="gear" id="settings-btn" title="Настройки">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h.01a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>
+        </button>
+      </div>
+      <nav class="tabs" id="tabs">
+        <button data-tab="needs">Нужно тебе <span class="count" id="needs-count">0</span></button>
+        <button data-tab="mine">Мои</button>
+        <button data-tab="review">Ревью</button>
+        <button data-tab="all">Все</button>
+      </nav>
+    </header>
+    <div class="error" id="error" hidden></div>
+    <section class="list" id="list"></section>
+    <div class="toast" id="toast" hidden></div>
+
+    <section class="settings" id="settings" hidden>
+      <header class="settings-head">
+        <h2>Настройки</h2>
+        <button class="close" id="settings-close" title="Закрыть">
+          <svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>
+        </button>
+      </header>
+      <form class="settings-form" id="settings-form" autocomplete="off">
+        <fieldset>
+          <legend>GitLab</legend>
+          <label>URL
+            <input name="gl-url" id="gl-url" type="url" placeholder="https://gitlab.example.com">
+          </label>
+          <div class="row">
+            <label>Логин
+              <input name="gl-username" id="gl-username" placeholder="ivanov">
+            </label>
+            <label>Токен
+              <input name="gl-token" id="gl-token" type="password" placeholder="read_api">
+            </label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>YouTrack</legend>
+          <label>URL
+            <input name="yt-url" id="yt-url" type="url" placeholder="https://youtrack.example.com">
+          </label>
+          <div class="row">
+            <label>Логин
+              <input name="yt-login" id="yt-login" placeholder="ivanov">
+            </label>
+            <label>Токен
+              <input name="yt-token" id="yt-token" type="password" placeholder="perm:…">
+            </label>
+          </div>
+          <label>Запрос задач
+            <input name="yt-query" id="yt-query" placeholder="for: me Sprint: {Current sprint}">
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Правила</legend>
+          <div class="row">
+            <label>Нужно апрувов
+              <input name="r-approvals" id="r-approvals" type="number" min="0" max="99">
+            </label>
+            <label>Статус ревью
+              <input name="r-review-state" id="r-review-state" placeholder="Code Review">
+            </label>
+          </div>
+          <div class="row">
+            <label>Команда перевода
+              <input name="r-next-command" id="r-next-command" placeholder="State Ready for QA">
+            </label>
+            <label class="check">
+              <input name="r-auto" id="r-auto" type="checkbox"> Переводить автоматически
+            </label>
+          </div>
+          <div class="row">
+            <label>Релизные ветки
+              <input name="r-release" id="r-release" placeholder="release/">
+            </label>
+            <label>Смотрю MR за
+              <input name="r-lookback" id="r-lookback" placeholder="336h">
+            </label>
+          </div>
+          <div class="row">
+            <label>MR отстал от target на, коммитов
+              <input name="r-behind" id="r-behind" type="number" min="0" max="9999" placeholder="0 — не подсвечивать">
+            </label>
+          </div>
+          <div class="row">
+            <label>Опрос каждые
+              <input name="r-poll" id="r-poll" placeholder="2m">
+            </label>
+            <label class="check">
+              <input name="r-nodraft" id="r-nodraft" type="checkbox"> Исключать draft
+            </label>
+          </div>
+        </fieldset>
+        <div class="probe" id="settings-probe" hidden></div>
+        <div class="settings-actions">
+          <button type="button" class="btn ghost" id="settings-test">Проверить</button>
+          <button type="submit" class="btn primary">Сохранить</button>
+        </div>
+        <div class="settings-hint">Достаточно заполнить один из сервисов целиком — второй можно добавить позже.</div>
+        <div class="settings-path" id="settings-path"></div>
+      </form>
+    </section>
+
+    <section class="settings" id="mute" hidden>
+      <header class="settings-head">
+        <h2>Заглушить</h2>
+        <button class="close" id="mute-close" title="Закрыть">
+          <svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>
+        </button>
+      </header>
+      <div class="mute-body">
+        <div class="mute-title" id="mute-title"></div>
+        <div class="mute-hint">Карточка спрячется во вкладку «Все → Заглушено», уведомления по MR прекратятся.</div>
+        <label class="check mute-all">
+          <input type="checkbox" id="mute-also"> Заглушить все карточки с таким же названием
+        </label>
+        <div class="mute-options" id="mute-options">
+          <button class="btn ghost" data-hours="1">На час</button>
+          <button class="btn ghost" data-hours="3">На 3 часа</button>
+          <button class="btn ghost" data-hours="24">На сутки</button>
+          <button class="btn primary" data-hours="0">Навсегда</button>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

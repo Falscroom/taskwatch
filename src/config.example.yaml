@@ -1,0 +1,28 @@
+# cp config.example.yaml ~/.config/taskwatch/config.yaml
+# Токены в yaml не пишутся — они хранятся в Связке ключей macOS (вписываются
+# один раз через окно настроек). Обходной путь: TASKWATCH_GITLAB_TOKEN / TASKWATCH_YOUTRACK_TOKEN.
+
+poll_interval: 2m
+
+gitlab:
+  url: https://gitlab.example.com
+  token: ""          # read_api — хранится в Связке ключей, сюда не пишем
+  username: ivanov
+
+youtrack:
+  url: https://youtrack.example.com
+  token: ""          # perm:... — хранится в Связке ключей, сюда не пишем
+  login: ivanov
+  query: "for: me Sprint: {Current sprint}"
+
+rules:
+  required_approvals: 2
+  review_state: "Code Review"
+  next_command: "State Ready for QA"
+  auto_transition: false
+  release_branch_prefix: "release/"
+  mr_lookback: 336h
+  exclude_draft: false
+  # свой MR, отставший от target минимум на столько коммитов, подсвечивается;
+  # 0 — не подсвечивать
+  mr_behind_commits: 10
