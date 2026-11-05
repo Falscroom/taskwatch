@@ -63,7 +63,9 @@ type MR struct {
 	ProjectID int
 	Title     string
 	WebURL    string
-	State     MRState
+	// SourceBranch — ветка MR; по ней (или по заголовку) MR находит свою таску.
+	SourceBranch string
+	State        MRState
 	// SHA — головной коммит; меняется с каждым пушем.
 	SHA       string
 	CreatedAt time.Time

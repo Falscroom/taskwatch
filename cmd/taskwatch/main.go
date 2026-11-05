@@ -9,16 +9,14 @@ import (
 	"os/signal"
 	"syscall"
 
+	"taskwatch/internal/app"
 	"taskwatch/internal/config"
 	"taskwatch/internal/engine"
 	"taskwatch/internal/gui"
-	"taskwatch/internal/integrations/gitlab"
-	"taskwatch/internal/integrations/youtrack"
 	"taskwatch/internal/platform/keychain"
 	"taskwatch/internal/platform/macnotify"
 	"taskwatch/internal/settings"
 	"taskwatch/internal/state"
-	"taskwatch/internal/watch"
 )
 
 const usage = `usage: taskwatch [-config path] [-addr host:port] <command>
@@ -64,10 +62,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	gl := gitlab.New(cfg.GitLab.URL, cfg.GitLab.Token)
-	yt := youtrack.New(cfg.YouTrack.URL, cfg.YouTrack.Token)
-	collector := watch.NewCollector(cfg, gl, yt)
-	eng := engine.New(cfg, collector, store, yt, macnotify.Send)
+	eng := engine.New(cfg, store, macnotify.Send, app.Deps)
 
 	switch cmd {
 	case "app":
@@ -91,7 +86,7 @@ func main() {
 			log.Fatal(err)
 		}
 	case "status":
-		snap, err := collector.Collect(context.Background())
+		snap, err := app.Deps(cfg).Collector.Collect(context.Background())
 		if err != nil {
 			log.Fatal(err)
 		}

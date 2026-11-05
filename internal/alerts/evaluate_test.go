@@ -1,4 +1,4 @@
-package rules
+package alerts
 
 import (
 	"strings"

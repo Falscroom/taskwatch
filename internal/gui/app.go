@@ -82,14 +82,14 @@ func Run(eng *engine.Engine, svc *settings.Service) error {
 	tray.SetMenu(menu)
 	tray.AttachWindow(window).WindowOffset(5)
 
-	eng.OnUpdate = func() {
+	eng.Subscribe(func() {
 		snap, updated, err := eng.Snapshot()
 		label := ""
 		if n := view.Build(snap, updated, err, eng.Config().Policy(), eng.Mutes()).NeedsYou; n > 0 {
 			label = strconv.Itoa(n)
 		}
 		tray.SetLabel(label)
-	}
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -10,11 +10,8 @@ import (
 	"taskwatch/internal/config"
 	"taskwatch/internal/domain"
 	"taskwatch/internal/engine"
-	"taskwatch/internal/integrations/gitlab"
-	"taskwatch/internal/integrations/youtrack"
 	"taskwatch/internal/settings"
 	"taskwatch/internal/view"
-	"taskwatch/internal/watch"
 )
 
 func newHandler(eng *engine.Engine, svc *settings.Service, assets http.Handler, openURL func(string) error) http.Handler {
@@ -132,9 +129,7 @@ func newHandler(eng *engine.Engine, svc *settings.Service, assets http.Handler, 
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		gl := gitlab.New(cfg.GitLab.URL, cfg.GitLab.Token)
-		yt := youtrack.New(cfg.YouTrack.URL, cfg.YouTrack.Token)
-		eng.Reload(cfg, watch.NewCollector(cfg, gl, yt), yt)
+		eng.Reload(cfg)
 		w.WriteHeader(http.StatusNoContent)
 	})
 

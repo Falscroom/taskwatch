@@ -15,15 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"taskwatch/internal/app"
 	"taskwatch/internal/config"
 	"taskwatch/internal/engine"
 	"taskwatch/internal/integrations/gitlab"
-	"taskwatch/internal/integrations/youtrack"
 	"taskwatch/internal/settings"
 	"taskwatch/internal/state"
 	"taskwatch/internal/testutil/fakeapi"
 	"taskwatch/internal/testutil/fakesecrets"
-	"taskwatch/internal/watch"
 )
 
 func TestMain(m *testing.M) {
@@ -53,9 +52,8 @@ func newAPI(t *testing.T, cfg *config.Config) *apiHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	yt := youtrack.New(cfg.YouTrack.URL, cfg.YouTrack.Token)
 	noop := func(title, message, url, key string) error { return nil }
-	eng := engine.New(cfg, watch.NewCollector(cfg, gitlab.New(cfg.GitLab.URL, cfg.GitLab.Token), yt), store, yt, noop)
+	eng := engine.New(cfg, store, noop, app.Deps)
 	h := &apiHarness{eng: eng, configPath: path, secrets: fakesecrets.New(nil)}
 	assets := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "asset:"+r.URL.Path) })
 	svc := settings.New(path, h.secrets)

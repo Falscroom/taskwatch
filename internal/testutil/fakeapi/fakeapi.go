@@ -49,6 +49,7 @@ type Server struct {
 	commands []Command
 	failCode int
 	cmdFail  int
+	refsFail int
 
 	GitLabUser    string
 	YouTrackLogin string
@@ -73,6 +74,9 @@ func (s *Server) SetIssues(issues ...Issue) { s.mu.Lock(); s.issues = issues; s.
 
 // FailWith заставляет все запросы отвечать этим статусом; 0 — снова отвечать нормально.
 func (s *Server) FailWith(code int) { s.mu.Lock(); s.failCode = code; s.mu.Unlock() }
+
+// FailRefs заставляет запрос веток коммита отвечать этим статусом; 0 — отвечать.
+func (s *Server) FailRefs(code int) { s.mu.Lock(); s.refsFail = code; s.mu.Unlock() }
 
 // FailCommands заставляет POST /api/commands отвечать этим статусом; 0 — принимать.
 func (s *Server) FailCommands(code int) { s.mu.Lock(); s.cmdFail = code; s.mu.Unlock() }
@@ -140,6 +144,13 @@ func (s *Server) routes() http.Handler {
 		s.withMR(w, r, func(m MR) any { return nonNil(m.Notes) })
 	})
 	mux.HandleFunc("GET /api/v4/projects/{project}/repository/commits/{sha}/refs", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		code := s.refsFail
+		s.mu.Unlock()
+		if code != 0 {
+			http.Error(w, "refs failed", code)
+			return
+		}
 		type ref struct {
 			Type string `json:"type"`
 			Name string `json:"name"`

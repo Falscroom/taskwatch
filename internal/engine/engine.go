@@ -1,5 +1,5 @@
-// Package engine крутит цикл опроса: собирает снапшот, шлёт одноразовые уведомления
-// и держит последний снапшот для UI.
+// Package engine крутит цикл опроса: собирает снапшот, доставляет уведомления
+// и держит последний снапшот для окна.
 package engine
 
 import (
@@ -10,62 +10,97 @@ import (
 	"sync/atomic"
 	"time"
 
+	"taskwatch/internal/alerts"
 	"taskwatch/internal/config"
 	"taskwatch/internal/domain"
-	"taskwatch/internal/integrations/youtrack"
-	"taskwatch/internal/rules"
 	"taskwatch/internal/state"
-	"taskwatch/internal/watch"
 )
 
 // errNotConfigured — конфиг ещё не заполнен, движок ждёт настройки из UI.
 var errNotConfigured = errors.New("настройки не заполнены — открой настройки и введи токен")
 
-// NotifyFunc показывает уведомление; group — ключ события, по нему macOS
-// заменяет уведомление, а не дублирует.
-type NotifyFunc func(title, message, url, group string) error
+// Collector — откуда движок берёт снапшот.
+type Collector interface {
+	Collect(ctx context.Context) (*domain.Snapshot, error)
+}
 
-// deps — неизменяемый набор конфига и клиентов; Reload подменяет его целиком,
-// поэтому Tick и Reload не мешают друг другу без блокировок.
-type deps struct {
-	cfg       *config.Config
-	collector *watch.Collector
-	yt        *youtrack.Client
+// Deps — то, что пересобирается при смене настроек.
+type Deps struct {
+	Collector Collector
+	// Transition применяет команду YouTrack к таске; nil — YouTrack не настроен.
+	Transition alerts.Transitioner
+}
+
+// Factory собирает Deps под конфиг.
+type Factory func(cfg *config.Config) Deps
+
+// current — конфиг и собранные под него зависимости. Reload подменяет их
+// целиком, поэтому Tick и Reload не мешают друг другу без блокировок.
+type current struct {
+	cfg  *config.Config
+	deps Deps
 }
 
 type Engine struct {
 	store   *state.Store
-	notify  NotifyFunc
+	notify  alerts.Notifier
+	build   Factory
 	refresh chan struct{}
-	deps    atomic.Pointer[deps]
-
-	// OnUpdate вызывается после каждого прохода опроса (успешного или нет)
-	OnUpdate func()
+	current atomic.Pointer[current]
 
 	mu      sync.RWMutex
 	snap    *domain.Snapshot
 	updated time.Time
 	lastErr error
 
-	// recheck — прошлый тик выглядел подозрительно (пустота там, где были карточки):
-	// следующий тик подтверждает пустоту или опровергает её.
-	recheck bool
+	subsMu  sync.Mutex
+	subs    map[int]func()
+	nextSub int
+
+	guard glitchGuard // только из Tick
 }
 
-func New(cfg *config.Config, collector *watch.Collector, store *state.Store, yt *youtrack.Client, notify NotifyFunc) *Engine {
-	e := &Engine{store: store, notify: notify, refresh: make(chan struct{}, 1)}
-	e.deps.Store(&deps{cfg: cfg, collector: collector, yt: yt})
+func New(cfg *config.Config, store *state.Store, notify alerts.Notifier, build Factory) *Engine {
+	e := &Engine{store: store, notify: notify, build: build, refresh: make(chan struct{}, 1), subs: map[int]func(){}}
+	e.current.Store(&current{cfg: cfg, deps: build(cfg)})
 	return e
 }
 
-// Reload подменяет конфиг и клиентов — вызывается после сохранения настроек из UI.
-func (e *Engine) Reload(cfg *config.Config, collector *watch.Collector, yt *youtrack.Client) {
-	e.deps.Store(&deps{cfg: cfg, collector: collector, yt: yt})
+// Reload пересобирает зависимости под новый конфиг — после сохранения настроек из UI.
+func (e *Engine) Reload(cfg *config.Config) {
+	e.current.Store(&current{cfg: cfg, deps: e.build(cfg)})
 	e.Refresh()
 }
 
 // Config возвращает текущий конфиг — для UI (view.Build, форма настроек).
-func (e *Engine) Config() *config.Config { return e.deps.Load().cfg }
+func (e *Engine) Config() *config.Config { return e.current.Load().cfg }
+
+// Subscribe регистрирует fn: он вызывается после каждого прохода опроса
+// (успешного или нет) и после смены заглушений. Возвращает отписку.
+func (e *Engine) Subscribe(fn func()) (unsubscribe func()) {
+	e.subsMu.Lock()
+	defer e.subsMu.Unlock()
+	id := e.nextSub
+	e.nextSub++
+	e.subs[id] = fn
+	return func() {
+		e.subsMu.Lock()
+		defer e.subsMu.Unlock()
+		delete(e.subs, id)
+	}
+}
+
+func (e *Engine) publish() {
+	e.subsMu.Lock()
+	fns := make([]func(), 0, len(e.subs))
+	for _, fn := range e.subs {
+		fns = append(fns, fn)
+	}
+	e.subsMu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
+}
 
 func (e *Engine) Run(ctx context.Context) {
 	first := true
@@ -78,8 +113,7 @@ func (e *Engine) Run(ctx context.Context) {
 			// Разовый ориентир, сколько занимает полный сбор — помогает
 			// отличать «данные собираются» от «сбор не запускался».
 			first = false
-			snap, _, _ := e.Snapshot()
-			if snap != nil {
+			if snap, _, _ := e.Snapshot(); snap != nil {
 				log.Printf("первый опрос завершён за %s: тасок %d, MR %d",
 					time.Since(started).Round(time.Second), len(snap.Tasks), len(snap.AllMRs()))
 			}
@@ -114,104 +148,91 @@ func (e *Engine) Refresh() {
 	}
 }
 
+// Snapshot — последний принятый снапшот, когда он собран, и ошибка последнего тика.
 func (e *Engine) Snapshot() (*domain.Snapshot, time.Time, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.snap, e.updated, e.lastErr
 }
 
-// Tick не потокобезопасен относительно самого себя: вызывать из одного места (Run или once).
+// Tick — один проход: собрать, проверить на сбой выдачи, запомнить, доставить
+// уведомления. Не потокобезопасен относительно самого себя: вызывать из одного
+// места (Run или once).
 func (e *Engine) Tick(ctx context.Context) error {
-	d := e.deps.Load()
+	defer e.publish()
+	cur := e.current.Load()
 
-	var snap *domain.Snapshot
-	err := errNotConfigured
-	if d.cfg.Configured() {
-		snap, err = d.collector.Collect(ctx)
+	if !cur.cfg.Configured() {
+		e.fail(errNotConfigured)
+		return errNotConfigured
 	}
-
-	// GitLab иногда отдаёт пустой список там, где только что были карточки, и
-	// ошибкой это не считается. Проглотить такой тик — значит на poll_interval
-	// остаться без своих MR (ревью при этом могут остаться). Пустоту принимаем
-	// только со второго подтверждения, а между тиками устраиваем перепроверку.
-	if snap != nil && e.degraded(snap) && !e.recheck {
-		e.recheck = true
-		base, now := e.countsBaseline(), snap.Counts()
-		log.Printf("подозрительный тик: свои MR %d→%d, ревью %d→%d, таски %d→%d — держу прошлый вид, перепроверяю сразу",
-			base.Own, now.Own, base.Reviews, now.Reviews, base.Tasks, now.Tasks)
-		e.Refresh()
-		if e.OnUpdate != nil {
-			defer e.OnUpdate()
-		}
-		return nil
-	}
-	if snap != nil && e.degraded(snap) {
-		log.Print("пустота подтвердилась повторным тиком — считаю правдой")
-	}
-	e.recheck = false
-
-	e.setLast(snap, err)
-	if snap != nil {
-		e.store.SetCounts(state.Counts(snap.Counts()))
-	}
-	if e.OnUpdate != nil {
-		defer e.OnUpdate()
-	}
+	snap, err := cur.deps.Collector.Collect(ctx)
 	if err != nil {
+		e.fail(err)
 		return err
 	}
+	if !e.guard.accept(e.baseline(), snap) {
+		e.Refresh() // перепроверить сразу, прошлый вид пока остаётся
+		return nil
+	}
 
+	e.mu.Lock()
+	e.snap, e.updated, e.lastErr = snap, time.Now(), nil
+	e.mu.Unlock()
+	e.store.SetCounts(state.Counts(snap.Counts()))
+
+	e.deliver(ctx, cur, snap)
+	return e.store.Save()
+}
+
+// fail запоминает ошибку тика; прошлый снапшот остаётся на экране.
+func (e *Engine) fail(err error) {
+	e.guard.reset()
+	e.mu.Lock()
+	e.lastErr = err
+	e.mu.Unlock()
+}
+
+// baseline — с чем сравнивать новый снапшот: прошлый в памяти, а после
+// рестарта — счётчики из state.json.
+func (e *Engine) baseline() domain.Counts {
+	if prev, _, _ := e.Snapshot(); prev != nil {
+		return prev.Counts()
+	}
+	return domain.Counts(e.store.Counts())
+}
+
+func (e *Engine) deliver(ctx context.Context, cur *current, snap *domain.Snapshot) {
 	seed := e.store.Fresh()
 	if seed {
 		log.Print("first run: remembering current events without notifications")
 	}
-
 	mutes, now := e.Mutes(), time.Now()
-	mutedIDs := make(map[int]bool)
+	muted := make(map[int]bool)
 	for _, mr := range snap.AllMRs() {
-		if _, muted := mutes.Match(mr, now); muted {
-			mutedIDs[mr.ID] = true
+		if _, ok := mutes.Match(mr, now); ok {
+			muted[mr.ID] = true
 		}
 	}
-	for _, ev := range rules.Evaluate(snap, d.cfg.Policy()) {
-		// Заглушенный MR: событие запоминаем без отправки, чтобы после снятия заглушения
-		// не прилетела накопившаяся за время тишины старуха.
-		if ev.MRID != 0 && mutedIDs[ev.MRID] {
-			e.store.Mark(ev.Key)
-			continue
-		}
-		if e.store.Seen(ev.Key) {
-			continue
-		}
-		if !seed {
-			e.autoTransition(ctx, d, &ev)
-			if err := e.notify(ev.Title, ev.Message, ev.URL, ev.Key); err != nil {
-				log.Printf("notify %s: %v", ev.Key, err)
-				continue
-			}
-		}
-		e.store.Mark(ev.Key)
+	d := alerts.Dispatcher{
+		Ledger: e.store,
+		Notify: e.notify,
+		Seed:   seed,
+		Muted:  func(id int) bool { return muted[id] },
 	}
-	return e.store.Save()
-}
-
-func (e *Engine) setLast(snap *domain.Snapshot, err error) {
-	e.mu.Lock()
-	e.lastErr = err
-	if err == nil {
-		e.snap = snap
-		e.updated = time.Now()
+	if cur.cfg.Rules.AutoTransition {
+		d.AutoTransition = cur.deps.Transition
 	}
-	e.mu.Unlock()
+	d.Dispatch(ctx, alerts.Evaluate(snap, cur.cfg.Policy()))
 }
 
 // Transition переводит таску командой из конфига по запросу из UI.
 func (e *Engine) Transition(ctx context.Context, issueID string) error {
-	d := e.deps.Load()
-	if !d.cfg.YouTrackOK() {
+	cur := e.current.Load()
+	if cur.deps.Transition == nil {
 		return errors.New("youtrack is not configured")
 	}
-	if err := d.yt.Command(ctx, issueID, d.cfg.Rules.NextCommand); err != nil {
+	if err := cur.deps.Transition(ctx, issueID, cur.cfg.Rules.NextCommand); err != nil {
 		return err
 	}
 	e.Refresh()
@@ -226,14 +247,7 @@ func (e *Engine) Mute(key, title string, until time.Time) error {
 	if title != "" {
 		e.store.Mute(domain.TitleKey(title), until)
 	}
-	if err := e.store.Save(); err != nil {
-		return err
-	}
-	// Вид пересобирается при следующем /api/view, а бейджу нужен толчок сейчас.
-	if e.OnUpdate != nil {
-		e.OnUpdate()
-	}
-	return nil
+	return e.saveMutes()
 }
 
 // Unmute возвращает MR: снапшот всегда содержит все MR, карточка появится сразу.
@@ -243,44 +257,17 @@ func (e *Engine) Unmute(key, title string) error {
 	if title != "" {
 		e.store.Unmute(domain.TitleKey(title))
 	}
+	return e.saveMutes()
+}
+
+func (e *Engine) saveMutes() error {
 	if err := e.store.Save(); err != nil {
 		return err
 	}
-	if e.OnUpdate != nil {
-		e.OnUpdate()
-	}
+	// Вид пересобирается при следующем /api/view, а бейджу нужен толчок сейчас.
+	e.publish()
 	return nil
 }
 
 // Mutes — текущие заглушения для view.Build и сверки событий.
 func (e *Engine) Mutes() domain.MuteRules { return e.store.Mutes() }
-
-// countsBaseline — с чем сравнивать: прошлый снапшот в памяти, а после рестарта —
-// счётчики из state.json.
-func (e *Engine) countsBaseline() domain.Counts {
-	if prev, _, _ := e.Snapshot(); prev != nil {
-		return prev.Counts()
-	}
-	return domain.Counts(e.store.Counts())
-}
-
-// degraded — тик обнулил разделы, которые были непустыми. Честная ошибка так
-// не выглядит (ошибки возвращаются с err), это похоже на сбой выдачи GitLab.
-func (e *Engine) degraded(snap *domain.Snapshot) bool {
-	base, now := e.countsBaseline(), snap.Counts()
-	return (now.Own == 0 && base.Own > 0) ||
-		(now.Reviews == 0 && base.Reviews > 0) ||
-		(now.Tasks == 0 && base.Tasks > 0)
-}
-
-func (e *Engine) autoTransition(ctx context.Context, d *deps, ev *rules.Event) {
-	if ev.Transition == nil || !d.cfg.Rules.AutoTransition {
-		return
-	}
-	if err := d.yt.Command(ctx, ev.Transition.IssueID, ev.Transition.Command); err != nil {
-		log.Printf("transition %s: %v", ev.Transition.IssueID, err)
-		ev.Message = "Не удалось перевести автоматически: " + err.Error()
-		return
-	}
-	ev.Message = "Переведена: " + ev.Transition.Command
-}

@@ -41,13 +41,14 @@ taskwatch [-config path] [-addr host:port] <command>
 cmd/taskwatch/     точка входа и CLI
 internal/          весь код приложения
   domain/          модель и бизнес-правила (Policy, MuteRules); ничего не импортирует
-  watch/           сбор снапшота из GitLab и YouTrack, перевод в domain
-  rules/           события для уведомлений
+  collect/         сбор снапшота через порты TaskSource/MRSource, параллельная догрузка
+  alerts/          события из снапшота и их доставка (Dispatcher: один раз, заглушения, авто-перевод)
   view/            карточки окна
-  engine/          цикл опроса, дедуп и отправка уведомлений
+  engine/          цикл опроса, защита от пустых тиков, последний снапшот, подписки
+  app/             сборка зависимостей из конфига — единственное место, где создаются клиенты
   config/          структура настроек и yaml, без побочных эффектов
   settings/        загрузка конфига с токенами, сохранение формы, проверка связи
-  integrations/    клиенты GitLab и YouTrack поверх общего httpx (JSON, ретраи)
+  integrations/    GitLab и YouTrack: клиенты поверх общего httpx и источники для collect
   platform/        macOS: Связка ключей, уведомления; атомарная запись файлов
   gui/             меню-бар (Wails) и HTTP API окна
   gui/frontend/    окно: HTML/CSS/JS без сборщика, встраивается в бинарь
