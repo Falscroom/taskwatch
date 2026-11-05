@@ -158,8 +158,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 	// Заглушенность MR: личное правило "mr:<id>" или групповое "title:<название>".
 	mutedIDs := make(map[int]bool)
 	for _, mr := range snap.AllMRs() {
-		if state.Active(mutes[fmt.Sprintf("mr:%d", mr.ID)], now) ||
-			state.Active(mutes["title:"+mr.Title], now) {
+		if muteActive(mutes, fmt.Sprintf("mr:%d", mr.ID), now) || muteActive(mutes, "title:"+mr.Title, now) {
 			mutedIDs[mr.ID] = true
 		}
 	}
@@ -240,6 +239,13 @@ func (e *Engine) Unmute(key, title string) error {
 		e.OnUpdate()
 	}
 	return nil
+}
+
+// muteActive — действует ли заглушение по ключу. Нулевое время в карте значит
+// «навсегда», поэтому отсутствие ключа надо проверять явно, а не читать нуль.
+func muteActive(mutes map[string]time.Time, key string, now time.Time) bool {
+	until, ok := mutes[key]
+	return ok && state.Active(until, now)
 }
 
 // Mutes — текущие заглушения (ключ → до когда; zero = навсегда) для view.Build.

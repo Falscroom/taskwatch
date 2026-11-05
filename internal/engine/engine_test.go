@@ -18,11 +18,6 @@ import (
 	"taskwatch/internal/youtrack"
 )
 
-// knownMuteBug: Tick берёт mutes["mr:<id>"] без проверки наличия ключа, а нулевое
-// время значит «навсегда» — любой MR считается заглушенным, и его события молча
-// помечаются без отправки (и без авто-перевода).
-const knownMuteBug = "known bug: every MR is treated as muted forever (missing mute key reads as zero time)"
-
 func TestMain(m *testing.M) {
 	log.SetOutput(io.Discard)
 	os.Exit(m.Run())
@@ -140,7 +135,6 @@ func TestFirstRunRemembersWithoutNotifying(t *testing.T) {
 // Новое событие пытается уйти в уведомление и, не отправившись, не помечается —
 // повторится на следующем тике.
 func TestFailedNotificationIsRetried(t *testing.T) {
-	t.Skip(knownMuteBug)
 	h := newHarness(t, false, nil)
 	m := mr(1, "a")
 	h.srv.SetMine(m)
@@ -165,7 +159,6 @@ func TestTaskEventsAreNotified(t *testing.T) {
 }
 
 func TestMutedMREventsAreMarkedSilently(t *testing.T) {
-	t.Skip(knownMuteBug)
 	h := newHarness(t, false, nil)
 	muted, titled, loud := mr(1, "a"), mr(2, "Bump deps"), mr(3, "c")
 	h.srv.SetMine(muted, titled, loud)
@@ -313,7 +306,6 @@ func taskWithApprovedMR(srv *fakeapi.Server, approvals ...string) {
 }
 
 func TestAutoTransition(t *testing.T) {
-	t.Skip(knownMuteBug)
 	h := newHarness(t, true, func(c *config.Config) {
 		c.Rules.ReviewState = "Code Review"
 		c.Rules.NextCommand = "State Ready for QA"
