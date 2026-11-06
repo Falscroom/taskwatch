@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -43,7 +44,7 @@ type apiHarness struct {
 
 // newAPI поднимает обработчик API поверх движка с заданным конфигом. Токены
 // хранятся в памяти (fakesecrets), уведомления никуда не уходят.
-func newAPI(t *testing.T, cfg *config.Config) *apiHarness {
+func newAPI(t *testing.T, cfg *config.Config, opts ...Option) *apiHarness {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -60,7 +61,7 @@ func newAPI(t *testing.T, cfg *config.Config) *apiHarness {
 	h := &apiHarness{eng: eng, configPath: path, secrets: fakesecrets.New(nil)}
 	assets := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "asset:"+r.URL.Path) })
 	svc := settings.New(path, h.secrets)
-	h.handler = Handler(eng, svc, func(u string) error { h.opened = append(h.opened, u); return nil }, assets)
+	h.handler = Handler(eng, svc, func(u string) error { h.opened = append(h.opened, u); return nil }, assets, opts...)
 	return h
 }
 
@@ -615,5 +616,60 @@ func TestConfigBoards(t *testing.T) {
 	srv.FailWith(401)
 	if rec := h.do(t, http.MethodPost, "/api/config/boards", form); rec.Code != 502 || !strings.Contains(rec.Body.String(), "401") {
 		t.Errorf("failure: status %d (%s)", rec.Code, rec.Body)
+	}
+}
+
+type fakeLoginItem struct {
+	on   bool
+	fail error
+}
+
+func (f *fakeLoginItem) Supported() bool { return true }
+func (f *fakeLoginItem) Enabled() bool   { return f.on }
+func (f *fakeLoginItem) SetEnabled(on bool) error {
+	if f.fail != nil {
+		return f.fail
+	}
+	f.on = on
+	return nil
+}
+
+func TestLoginItem(t *testing.T) {
+	// Без приложения в меню-баре (web, демо) переключателя нет.
+	plain := newAPI(t, nil)
+	if rec := plain.do(t, http.MethodGet, "/api/login-item", nil); rec.Body.String() != "{\"supported\":false,\"enabled\":false}\n" {
+		t.Errorf("without login item: %s", rec.Body)
+	}
+	if rec := plain.do(t, http.MethodPost, "/api/login-item", map[string]any{"enabled": true}); rec.Code != 404 {
+		t.Errorf("POST without login item: %d", rec.Code)
+	}
+
+	li := &fakeLoginItem{}
+	h := newAPI(t, nil, WithLoginItem(li))
+	rec := h.do(t, http.MethodPost, "/api/login-item", map[string]any{"enabled": true})
+	if rec.Code != 200 || !li.on || rec.Body.String() != "{\"supported\":true,\"enabled\":true}\n" {
+		t.Errorf("enable: %d %s", rec.Code, rec.Body)
+	}
+	li.fail = errors.New("denied")
+	if rec := h.do(t, http.MethodPost, "/api/login-item", map[string]any{"enabled": false}); rec.Code != 500 || !li.on {
+		t.Errorf("failed switch: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// Удалённые токены уходят и из Связки ключей, и из движка: окно попросит настройки.
+func TestClearSecrets(t *testing.T) {
+	srv := fakeapi.New(t)
+	h := newAPI(t, configured(srv.URL))
+	if err := h.secrets.Set(settings.AccountGitLab, "secret-gl-token"); err != nil {
+		t.Fatal(err)
+	}
+	if rec := h.do(t, http.MethodPost, "/api/secrets/clear", nil); rec.Code != 204 {
+		t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+	}
+	if len(h.secrets.All()) != 0 {
+		t.Errorf("secrets = %v", h.secrets.All())
+	}
+	if cfg := h.eng.Config(); cfg.GitLab.Token != "" || cfg.YouTrack.Token != "" || cfg.Configured() {
+		t.Errorf("engine still has tokens: %+v", cfg)
 	}
 }

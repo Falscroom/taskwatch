@@ -22,15 +22,32 @@ import (
 var longPoll = 25 * time.Second
 
 type api struct {
-	eng      *engine.Engine
-	settings *settings.Service
-	openURL  func(string) error
+	eng       *engine.Engine
+	settings  *settings.Service
+	openURL   func(string) error
+	loginItem LoginItem
 }
+
+// LoginItem — запуск при входе в систему. Есть только у приложения в меню-баре.
+type LoginItem interface {
+	Supported() bool
+	Enabled() bool
+	SetEnabled(on bool) error
+}
+
+// Option — необязательная часть API.
+type Option func(*api)
+
+// WithLoginItem включает переключатель «Запускать при входе» в настройках.
+func WithLoginItem(li LoginItem) Option { return func(a *api) { a.loginItem = li } }
 
 // Handler — API под /api/, на остальных путях — assets (файлы окна).
 // openURL открывает ссылку в браузере пользователя.
-func Handler(eng *engine.Engine, svc *settings.Service, openURL func(string) error, assets http.Handler) http.Handler {
+func Handler(eng *engine.Engine, svc *settings.Service, openURL func(string) error, assets http.Handler, opts ...Option) http.Handler {
 	a := &api{eng: eng, settings: svc, openURL: openURL}
+	for _, o := range opts {
+		o(a)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/view", a.view)
 	mux.HandleFunc("POST /api/mute", a.mute)
@@ -42,6 +59,9 @@ func Handler(eng *engine.Engine, svc *settings.Service, openURL func(string) err
 	mux.HandleFunc("POST /api/config", a.saveConfig)
 	mux.HandleFunc("POST /api/config/test", a.testConfig)
 	mux.HandleFunc("POST /api/config/boards", a.boards)
+	mux.HandleFunc("POST /api/secrets/clear", a.clearSecrets)
+	mux.HandleFunc("GET /api/login-item", a.getLoginItem)
+	mux.HandleFunc("POST /api/login-item", a.setLoginItem)
 	mux.Handle("/", assets)
 	return mux
 }

@@ -78,6 +78,58 @@ type board struct {
 	Query  string `json:"query"`
 }
 
+// POST /api/secrets/clear — удалить токены из Связки ключей: перед тем как
+// выбросить приложение в Корзину. Движок остаётся без токенов и ждёт настроек.
+func (a *api) clearSecrets(w http.ResponseWriter, r *http.Request) {
+	if err := a.settings.ClearSecrets(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfg := *a.eng.Config()
+	cfg.GitLab.Token, cfg.YouTrack.Token = "", ""
+	a.eng.Reload(&cfg)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// loginItemState — переключатель «Запускать при входе» для формы.
+type loginItemState struct {
+	Supported bool `json:"supported"`
+	Enabled   bool `json:"enabled"`
+}
+
+func (a *api) loginItemState() loginItemState {
+	if a.loginItem == nil || !a.loginItem.Supported() {
+		return loginItemState{}
+	}
+	return loginItemState{Supported: true, Enabled: a.loginItem.Enabled()}
+}
+
+// GET /api/login-item — можно ли и включён ли запуск при входе.
+func (a *api) getLoginItem(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.loginItemState())
+}
+
+// POST /api/login-item — включить или выключить запуск при входе: {enabled}.
+// Отвечает состоянием после переключения: macOS может оставить пункт выключенным.
+func (a *api) setLoginItem(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if st := a.loginItemState(); !st.Supported {
+		writeError(w, http.StatusNotFound, "запуск при входе доступен только у приложения taskwatch.app")
+		return
+	}
+	if err := a.loginItem.SetEnabled(in.Enabled); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a.loginItemState())
+}
+
 // submitted — конфиг из присланной формы, готовый к сохранению: прежние
 // токены подставлены, проверка пройдена (settings.Resolve).
 func (a *api) submitted(r *http.Request, cur *config.Config) (*config.Config, error) {

@@ -15,6 +15,7 @@ import (
 	"taskwatch/internal/app"
 	"taskwatch/internal/config"
 	"taskwatch/internal/engine"
+	"taskwatch/internal/platform/loginitem"
 	"taskwatch/internal/settings"
 	"taskwatch/internal/state"
 	"taskwatch/internal/ui/frontend"
@@ -45,7 +46,7 @@ var commands = []command{
 	{"run", "опрашивать в цикле и слать уведомления, без UI", validConfig, runLoop},
 	{"once", "один проход опроса", validConfig, runOnce},
 	{"status", "показать таски спринта, MR, апрувы, сборки", validConfig, runStatus},
-	{"secret-clear", "удалить токены из Связки ключей (для uninstall)", noConfig, runSecretClear},
+	{"secret-clear", "удалить токены из Связки ключей", noConfig, runSecretClear},
 }
 
 func lookup(name string) (command, bool) {
@@ -98,7 +99,12 @@ func execute(cmd command, s setup) error {
 	return cmd.run(e)
 }
 
-func runApp(e env) error { return tray.Run(e.eng, e.settings, e.notifier) }
+// runApp — меню-бар. Перед стартом убирает установку прежних версий и на первом
+// запуске включает запуск при входе (prepareApp).
+func runApp(e env) error {
+	prepareApp(e.settings.Path())
+	return tray.Run(e.eng, e.settings, e.notifier, loginitem.Item{})
+}
 
 func runWeb(e env) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -128,8 +134,8 @@ func runStatus(e env) error {
 	return nil
 }
 
-// runSecretClear вызывается из uninstall.sh: токены из Связки ключей уходят
-// вместе с приложением. Конфиг для этого не нужен.
+// runSecretClear — то же, что «Удалить токены из Связки ключей» в настройках, из
+// терминала. Конфиг для этого не нужен.
 func runSecretClear(e env) error {
 	if err := e.settings.ClearSecrets(); err != nil {
 		return err

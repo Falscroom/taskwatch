@@ -5,7 +5,7 @@
 import { api, openURL } from "./api.js";
 import { toast } from "./dom.js";
 import { closeMute, muteFor, openMute } from "./mute.js";
-import { closeSettings, openSettings, pickBoards, testSettings, useBoard } from "./settings.js";
+import { clearSecrets, closeSettings, openSettings, pickBoards, testSettings, toggleLoginItem, useBoard } from "./settings.js";
 import { card, setTab, state } from "./store.js";
 import { render } from "./view.js";
 
@@ -73,6 +73,8 @@ const actions = {
   "settings-test": (el) => testSettings(/** @type {HTMLButtonElement} */ (el)),
   "settings-boards": (el) => pickBoards(/** @type {HTMLButtonElement} */ (el)),
   "board-pick": useBoard,
+  "login-item": (el) => toggleLoginItem(/** @type {HTMLInputElement} */ (el)),
+  "secrets-clear": (el) => clearSecrets(/** @type {HTMLButtonElement} */ (el)),
 };
 
 /** listen вешает делегированный обработчик кликов на root. */

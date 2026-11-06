@@ -1,27 +1,31 @@
 BIN   := bin/taskwatch
 APP   := bin/taskwatch.app
-PLIST := $(HOME)/Library/LaunchAgents/com.taskwatch.plist
-SHARE := $(HOME)/.local/share/taskwatch
-DIST  := dist/taskwatch-mac
+DMG   := dist/taskwatch.dmg
+
+# SIGN — чем подписывать taskwatch.app. Если в Связке ключей есть сертификат
+# подписи кода «taskwatch» — им: подпись одна на все сборки, и после обновления
+# macOS не спрашивает заново доступ к Связке ключей и разрешение на уведомления.
+# Иначе — ad-hoc («-»), своя у каждой сборки.
+SIGN ?= $(shell security find-certificate -c taskwatch >/dev/null 2>&1 && echo taskwatch || echo -)
 
 export MACOSX_DEPLOYMENT_TARGET := 14.0
 export CGO_CFLAGS := -mmacosx-version-min=14.0
 export CGO_LDFLAGS := -mmacosx-version-min=14.0
 
-.PHONY: build app icon test test-frontend vet lint fmt check demo demo-app status install uninstall dist clean
+.PHONY: build app icon test test-frontend vet lint fmt check demo demo-app status install uninstall dmg dist clean
 
 build:
 	go build -ldflags "-s -w" -trimpath -o $(BIN) ./cmd/taskwatch
 
-# app — taskwatch.app: бинарь + Info.plist + иконка, подпись ad-hoc. Уведомления
-# Центра уведомлений macOS работают только из такого бандла.
+# app — taskwatch.app: бинарь + Info.plist + иконка, подписанные SIGN. Уведомления
+# Центра уведомлений и «Объекты входа» работают только из такого бандла.
 app: build
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp $(BIN) $(APP)/Contents/MacOS/taskwatch
 	cp packaging/Info.plist $(APP)/Contents/Info.plist
 	cp packaging/taskwatch.icns $(APP)/Contents/Resources/taskwatch.icns
-	codesign --force --sign - $(APP)
+	codesign --force --sign "$(SIGN)" $(APP)
 
 # icon — пересобрать packaging/taskwatch.icns из генератора packaging/icon.
 icon:
@@ -65,29 +69,31 @@ demo-app:
 status: build
 	./$(BIN) status
 
+# install — поставить себе: taskwatch.app в «Программы» и запустить. На первом
+# запуске приложение само включает запуск при входе.
 install: app
-	mkdir -p $(HOME)/.local/bin $(HOME)/.config/taskwatch $(SHARE)
-	rm -rf $(SHARE)/taskwatch.app
-	cp -R $(APP) $(SHARE)/
-	ln -sfn $(SHARE)/taskwatch.app/Contents/MacOS/taskwatch $(HOME)/.local/bin/taskwatch
-	sed "s|__HOME__|$(HOME)|g" packaging/com.taskwatch.plist > $(PLIST)
-	-@launchctl bootout gui/$$(id -u) $(PLIST) 2>/dev/null
-	launchctl bootstrap gui/$$(id -u) $(PLIST)
+	-@osascript -e 'quit app "taskwatch"' 2>/dev/null
+	rm -rf /Applications/taskwatch.app
+	cp -R $(APP) /Applications/
+	open /Applications/taskwatch.app
 
 uninstall:
-	-launchctl bootout gui/$$(id -u) $(PLIST)
-	rm -f $(PLIST)
+	-@osascript -e 'quit app "taskwatch"' 2>/dev/null
+	rm -rf /Applications/taskwatch.app
 
-# dist — архив для раздачи коллегам: taskwatch.app + скрипты установки + README + исходники в src/.
-dist: app
-	rm -rf $(DIST) $(DIST).zip
-	mkdir -p $(DIST)/src
-	cp -R $(APP) $(DIST)/
-	cp packaging/install.sh packaging/uninstall.sh packaging/README.md packaging/com.taskwatch.plist config.example.yaml $(DIST)/
-	chmod +x $(DIST)/install.sh $(DIST)/uninstall.sh
-	cp -R cmd internal packaging Makefile go.mod go.sum .gitignore .golangci.yml config.example.yaml README.md $(DIST)/src/
-	cd dist && zip -rq taskwatch-mac.zip taskwatch-mac -x "*.DS_Store" && rm -rf taskwatch-mac
-	@echo "Готово: $(DIST).zip"
+# dmg — образ для раздачи: taskwatch.app, ярлык «Программы» для перетаскивания
+# и инструкция.
+dmg: app
+	rm -rf dist/dmg $(DMG)
+	mkdir -p dist/dmg
+	cp -R $(APP) dist/dmg/
+	ln -s /Applications dist/dmg/Applications
+	cp packaging/README.md dist/dmg/Инструкция.md
+	hdiutil create -volname taskwatch -srcfolder dist/dmg -ov -format UDZO $(DMG) >/dev/null
+	rm -rf dist/dmg
+	@echo "Готово: $(DMG)"
+
+dist: dmg
 
 clean:
 	rm -rf bin dist

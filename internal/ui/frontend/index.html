@@ -113,6 +113,13 @@
             </label>
           </div>
         </fieldset>
+        <fieldset>
+          <legend>Приложение</legend>
+          <label class="check" id="login-item-row" hidden>
+            <input id="login-item" type="checkbox" data-action="login-item"> Запускать при входе в систему
+          </label>
+          <button type="button" class="btn ghost danger" id="secrets-clear" data-action="secrets-clear">Удалить токены из Связки ключей</button>
+        </fieldset>
         <div class="probe" id="settings-probe" hidden></div>
         <div class="settings-actions">
           <button type="button" class="btn ghost" id="settings-test" data-action="settings-test">Проверить</button>

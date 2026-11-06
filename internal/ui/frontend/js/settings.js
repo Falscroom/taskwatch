@@ -29,6 +29,7 @@ function read() {
 
 export function openSettings() {
   if (state.config) fill(state.config);
+  loadLoginItem().catch((err) => toast(err.message));
   $("settings").hidden = false;
   input(FIELDS[0].id).focus();
 }
@@ -82,4 +83,56 @@ export async function pickBoards(/** @type {HTMLButtonElement} */ btn) {
 export function useBoard(/** @type {HTMLElement} */ el) {
   input("yt-query").value = el.dataset.query || "";
   $("yt-boards").hidden = true;
+}
+
+/** loadLoginItem показывает «Запускать при входе», если он есть: только у taskwatch.app. */
+async function loadLoginItem() {
+  const st = await api("/api/login-item");
+  $("login-item-row").hidden = !st.supported;
+  input("login-item").checked = st.enabled;
+}
+
+/**
+ * toggleLoginItem включает или выключает запуск при входе — сразу, без «Сохранить»,
+ * как в системных настройках. Показывает то, что вышло на деле.
+ * @param {HTMLInputElement} box
+ */
+export async function toggleLoginItem(box) {
+  const want = box.checked;
+  try {
+    const st = await api("/api/login-item", { enabled: want });
+    box.checked = st.enabled;
+    toast(st.enabled ? "taskwatch будет запускаться при входе" : "Запуск при входе выключен");
+  } catch (err) {
+    box.checked = !want;
+    throw err;
+  }
+}
+
+const CLEAR_LABEL = "Удалить токены из Связки ключей";
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let clearTimer;
+
+/**
+ * clearSecrets удаляет токены — перед тем как выбросить приложение в Корзину.
+ * Первое нажатие только спрашивает: кнопка ждёт второго 4 секунды.
+ * @param {HTMLButtonElement} btn
+ */
+export async function clearSecrets(btn) {
+  if (!btn.dataset.armed) {
+    btn.dataset.armed = "1";
+    btn.textContent = "Точно удалить? Нажми ещё раз";
+    clearTimer = setTimeout(() => {
+      delete btn.dataset.armed;
+      btn.textContent = CLEAR_LABEL;
+    }, 4000);
+    return;
+  }
+  clearTimeout(clearTimer);
+  delete btn.dataset.armed;
+  btn.textContent = CLEAR_LABEL;
+  await busy(btn, () => api("/api/secrets/clear", {}));
+  state.config = await api("/api/config");
+  if (state.config) fill(state.config);
+  toast("Токены удалены из Связки ключей");
 }

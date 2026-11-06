@@ -153,7 +153,7 @@ func (s *Service) Save(cur, next *config.Config) error {
 	return config.Save(s.path, next)
 }
 
-// ClearSecrets удаляет все токены из хранилища — для uninstall.
+// ClearSecrets удаляет все токены из хранилища: кнопка «Удалить токены из Связки ключей» и команда secret-clear.
 func (s *Service) ClearSecrets() error {
 	var errs []error
 	for _, acc := range Accounts {

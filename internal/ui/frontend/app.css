@@ -232,6 +232,8 @@ h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.ghost { border: 1px solid var(--line); color: var(--muted); }
 .btn.ghost:hover { color: var(--text); }
+.btn.ghost.danger { color: var(--red); justify-self: start; }
+.btn.ghost.danger:hover { border-color: var(--red); }
 
 .probe { display: grid; gap: 4px; padding: 10px 14px; border-radius: 12px; background: rgba(255, 255, 255, 0.05); font-size: 12.5px; }
 .probe .ok { color: var(--green); }

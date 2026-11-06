@@ -84,7 +84,7 @@ func run(addr string, inTray bool) error {
 	if inTray {
 		// Цикл опроса tray запускает сам; выход — «Выйти» в меню иконки.
 		log.Printf("демо в меню-баре (поддельные GitLab и YouTrack на %s)", srv.URL)
-		return tray.Run(eng, svc, notifier)
+		return tray.Run(eng, svc, notifier, nil) // без «Запускать при входе»: демо не трогает систему
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

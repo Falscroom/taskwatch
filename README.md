@@ -18,12 +18,26 @@
 make install
 ```
 
-Собирает `taskwatch.app`, кладёт его в `~/.local/share/taskwatch` и запускает как
-LaunchAgent. Дальше: иконка в строке меню → шестерёнка → GitLab (URL, логин, токен
-`read_api`); YouTrack по желанию — запрос тасок подставит кнопка «Подобрать».
+Собирает `taskwatch.app`, кладёт его в «Программы» и запускает; на первом запуске
+приложение само добавляется в «Объекты входа». Дальше: иконка в строке меню → шестерёнка →
+GitLab (URL, логин, токен `read_api`); YouTrack по желанию — запрос тасок подставит кнопка
+«Подобрать».
 
-Архив для раздачи — `make dist` (внутри `install.sh`, инструкция —
-[packaging/README.md](packaging/README.md)).
+Образ для раздачи — `make dmg` → `dist/taskwatch.dmg`: перетащить в «Программы»,
+инструкция внутри ([packaging/README.md](packaging/README.md)).
+
+Подпись. Без сертификата сборка подписывается ad-hoc, и после каждого обновления macOS
+заново спрашивает доступ к Связке ключей. Чтобы не спрашивала, создай в «Связке ключей»
+сертификат (Ассистент сертификатов → Создать сертификат: имя `taskwatch`, тип
+«Самоподписанный корневой», «Подпись кода») — `make` подхватит его сам. Убрать
+предупреждение Gatekeeper при первом запуске можно только подписью Developer ID и
+нотаризацией Apple.
+
+Команда в терминале (`taskwatch status`) — ссылка на бинарь приложения:
+
+```bash
+ln -s /Applications/taskwatch.app/Contents/MacOS/taskwatch ~/.local/bin/taskwatch
+```
 
 ## Разработка
 
@@ -43,4 +57,4 @@ make demo-app  # то же демо в меню-баре
 | `internal/alerts`, `internal/engine` | события, доставка уведомлений, цикл опроса |
 | `internal/ui` | HTTP API окна, меню-бар на Wails, фронтенд без сборщика |
 | `cmd/taskwatch` | точка входа: `app`, `web`, `run`, `once`, `status` |
-| `packaging/` | `install.sh`, LaunchAgent, `Info.plist`, иконка |
+| `packaging/` | `Info.plist`, иконка и её генератор, инструкция для DMG |
