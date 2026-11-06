@@ -2,7 +2,7 @@
 # Токены в yaml не пишутся — они хранятся в Связке ключей macOS (вписываются
 # один раз через окно настроек). Обходной путь: TASKWATCH_GITLAB_TOKEN / TASKWATCH_YOUTRACK_TOKEN.
 
-poll_interval: 2m
+poll_interval: 30m
 
 gitlab:
   url: https://gitlab.example.com

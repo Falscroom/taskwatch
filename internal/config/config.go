@@ -16,7 +16,7 @@ import (
 )
 
 // DefaultPollInterval — как часто опрашивать сервисы, если не задано иное.
-const DefaultPollInterval = 2 * time.Minute
+const DefaultPollInterval = 30 * time.Minute
 
 type GitLab struct {
 	URL string `yaml:"url"`

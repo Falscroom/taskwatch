@@ -267,7 +267,7 @@ func TestGetConfigHidesTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !form.Configured || !form.GitLab.TokenSet || !form.GitLab.OK || !form.YouTrack.TokenSet ||
-		form.PollInterval != "2m0s" || form.Rules.MRLookback != "336h0m0s" || form.ConfigPath != h.configPath {
+		form.PollInterval != config.DefaultPollInterval.String() || form.Rules.MRLookback != "336h0m0s" || form.ConfigPath != h.configPath {
 		t.Errorf("form = %+v", form)
 	}
 }
