@@ -6,12 +6,12 @@ poll_interval: 2m
 
 gitlab:
   url: https://gitlab.example.com
-  token: ""          # read_api — хранится в Связке ключей, сюда не пишем
+  # токен (read_api) вписывается в окне настроек и хранится в Связке ключей
   username: ivanov
 
 youtrack:
   url: https://youtrack.example.com
-  token: ""          # perm:... — хранится в Связке ключей, сюда не пишем
+  # токен (perm:...) — тоже в окне настроек, хранится в Связке ключей
   login: ivanov
   query: "for: me Sprint: {Current sprint}"
 

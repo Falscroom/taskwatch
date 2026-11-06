@@ -1,4 +1,5 @@
-// Package gitlab — клиент нужной части GitLab REST API v4.
+// Package gitlab — клиент нужной части GitLab REST API v4 (client.go) и источник
+// MR для сборщика (source.go): переводит ответы API в доменную модель.
 package gitlab
 
 import (

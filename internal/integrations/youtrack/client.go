@@ -1,4 +1,5 @@
-// Package youtrack — клиент нужной части YouTrack REST API.
+// Package youtrack — клиент нужной части YouTrack REST API (client.go) и источник
+// тасок для сборщика (source.go): переводит ответы API в доменную модель.
 package youtrack
 
 import (

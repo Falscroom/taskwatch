@@ -1,11 +1,15 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func writeYAML(t *testing.T, body string) string {
@@ -183,4 +187,56 @@ func TestPolicy(t *testing.T) {
 		p.ReviewState != "Code Review" || p.NextCommand != "State QA" || p.BehindThreshold != 7 {
 		t.Errorf("policy = %+v", p)
 	}
+}
+
+// config.example.yaml — документация для пользователя: в нём все настройки и
+// только они, без токенов, а с токенами он рабочий.
+func TestExampleConfig(t *testing.T) {
+	data, err := os.ReadFile("../../config.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	var c Config
+	if err := dec.Decode(&c); err != nil {
+		t.Fatalf("decode example: %v", err)
+	}
+	if c.GitLab.Token != "" || c.YouTrack.Token != "" {
+		t.Error("example must not contain tokens")
+	}
+	c.GitLab.Token, c.YouTrack.Token = "t", "t"
+	if err := c.Validate(); err != nil || !c.GitLabOK() || !c.YouTrackOK() {
+		t.Errorf("example with tokens is not a working config: %v", err)
+	}
+
+	all, err := yaml.Marshal(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := yamlKeys(t, data), yamlKeys(t, all); !slices.Equal(got, want) {
+		t.Errorf("example keys:\n%v\nconfig keys:\n%v", got, want)
+	}
+}
+
+// yamlKeys — все ключи документа через точку: gitlab, gitlab.url, …
+func yamlKeys(t *testing.T, data []byte) []string {
+	t.Helper()
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	var walk func(prefix string, m map[string]any)
+	walk = func(prefix string, m map[string]any) {
+		for k, v := range m {
+			keys = append(keys, prefix+k)
+			if sub, ok := v.(map[string]any); ok {
+				walk(prefix+k+".", sub)
+			}
+		}
+	}
+	walk("", doc)
+	slices.Sort(keys)
+	return keys
 }
