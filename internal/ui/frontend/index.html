@@ -65,9 +65,13 @@
               <input name="yt-token" id="yt-token" type="password" placeholder="perm:…">
             </label>
           </div>
-          <label>Запрос задач
-            <input name="yt-query" id="yt-query" placeholder="for: me Sprint: {Current sprint}">
-          </label>
+          <div class="query">
+            <label>Запрос задач
+              <input name="yt-query" id="yt-query" placeholder="for: me Board &lt;доска&gt;: {Current sprint}">
+            </label>
+            <button type="button" class="btn ghost" data-action="settings-boards">Подобрать</button>
+          </div>
+          <div class="boards" id="yt-boards" hidden></div>
         </fieldset>
         <fieldset>
           <legend>Правила</legend>

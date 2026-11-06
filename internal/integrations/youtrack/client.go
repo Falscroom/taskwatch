@@ -73,6 +73,22 @@ type Comment struct {
 	} `json:"author"`
 }
 
+// Agile — agile-доска. CurrentSprint — спринт, отмеченный текущим; nil, если
+// у доски нет спринтов или текущий не выбран.
+type Agile struct {
+	Name          string  `json:"name"`
+	CurrentSprint *Sprint `json:"currentSprint"`
+}
+
+type Sprint struct {
+	Name string `json:"name"`
+}
+
+// SprintQuery — запрос тасок текущего спринта доски, назначенных на тебя.
+func SprintQuery(board string) string {
+	return "for: me Board " + board + ": {Current sprint}"
+}
+
 func (c *Client) Issues(ctx context.Context, query string) ([]Issue, error) {
 	q := url.Values{
 		"query":  {query},
@@ -87,6 +103,13 @@ func (c *Client) Comments(ctx context.Context, issueID string) ([]Comment, error
 	q := url.Values{"fields": {"id,text,created,author(login)"}, "$top": {"100"}}
 	var out []Comment
 	return out, c.api.Get(ctx, "/api/issues/"+url.PathEscape(issueID)+"/comments", q, &out)
+}
+
+// Agiles — agile-доски, которые видит владелец токена.
+func (c *Client) Agiles(ctx context.Context) ([]Agile, error) {
+	q := url.Values{"fields": {"name,currentSprint(name)"}, "$top": {"500"}}
+	var out []Agile
+	return out, c.api.Get(ctx, "/api/agiles", q, &out)
 }
 
 // Command применяет команду YouTrack к задаче, например "State Ready for QA".

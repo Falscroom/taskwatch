@@ -13,7 +13,8 @@ youtrack:
   url: https://youtrack.example.com
   # токен (perm:...) — тоже в окне настроек, хранится в Связке ключей
   login: ivanov
-  query: "for: me Sprint: {Current sprint}"
+  # таски текущего спринта доски; в окне настроек есть кнопка «Подобрать»
+  query: "for: me Board Команда: {Current sprint}"
 
 rules:
   required_approvals: 2

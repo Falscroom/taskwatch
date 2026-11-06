@@ -20,6 +20,7 @@ import (
 	"taskwatch/internal/config"
 	"taskwatch/internal/engine"
 	"taskwatch/internal/integrations/gitlab"
+	"taskwatch/internal/integrations/youtrack"
 	"taskwatch/internal/settings"
 	"taskwatch/internal/state"
 	"taskwatch/internal/testutil/fakeapi"
@@ -571,5 +572,47 @@ func TestServe(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Serve did not stop")
+	}
+}
+
+// Доски подбирают, пока YouTrack заполнен наполовину: логина и запроса ещё
+// нет, токен — сохранённый.
+func TestConfigBoards(t *testing.T) {
+	srv, other := fakeapi.New(t), fakeapi.New(t)
+	srv.SetAgiles(
+		youtrack.Agile{Name: "Team A", CurrentSprint: &youtrack.Sprint{Name: "Sprint 42"}},
+		youtrack.Agile{Name: "Kanban"},
+	)
+	h := newAPI(t, configured(srv.URL))
+	form := formFor(srv.URL)
+	ytForm := func(url string) map[string]any {
+		return map[string]any{"url": url, "login": "", "query": "", "token": ""}
+	}
+
+	form["youtrack"] = ytForm(srv.URL)
+	rec := h.do(t, http.MethodPost, "/api/config/boards", form)
+	var got []board
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+		t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+	}
+	if len(got) != 1 || got[0] != (board{Name: "Team A", Sprint: "Sprint 42", Query: "for: me Board Team A: {Current sprint}"}) {
+		t.Errorf("boards = %+v", got)
+	}
+
+	form["youtrack"] = ytForm("")
+	if rec := h.do(t, http.MethodPost, "/api/config/boards", form); rec.Code != 400 || !strings.Contains(rec.Body.String(), "YouTrack") {
+		t.Errorf("without YouTrack: status %d (%s)", rec.Code, rec.Body)
+	}
+
+	// Сохранённый токен не уходит на новый адрес.
+	form["youtrack"] = ytForm(other.URL)
+	if rec := h.do(t, http.MethodPost, "/api/config/boards", form); rec.Code != 400 || len(other.Requests()) != 0 {
+		t.Errorf("new host: status %d, requests %v", rec.Code, other.Requests())
+	}
+
+	form["youtrack"] = ytForm(srv.URL)
+	srv.FailWith(401)
+	if rec := h.do(t, http.MethodPost, "/api/config/boards", form); rec.Code != 502 || !strings.Contains(rec.Body.String(), "401") {
+		t.Errorf("failure: status %d (%s)", rec.Code, rec.Body)
 	}
 }

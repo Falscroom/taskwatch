@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -47,9 +48,49 @@ func (a *api) testConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]probe{"gitlab": probeOf(gl), "youtrack": probeOf(yt)})
 }
 
+// POST /api/config/boards — доски YouTrack с текущим спринтом по адресу и токену
+// из формы: окно предлагает выбрать доску и подставляет запрос тасок.
+func (a *api) boards(w http.ResponseWriter, r *http.Request) {
+	cfg, err := a.draft(r, a.eng.Config())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	boards, err := settings.Boards(r.Context(), cfg)
+	switch {
+	case errors.Is(err, settings.ErrNoYouTrack):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	out := make([]board, 0, len(boards))
+	for _, b := range boards {
+		out = append(out, board(b))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type board struct {
+	Name   string `json:"name"`
+	Sprint string `json:"sprint"`
+	Query  string `json:"query"`
+}
+
 // submitted — конфиг из присланной формы, готовый к сохранению: прежние
 // токены подставлены, проверка пройдена (settings.Resolve).
 func (a *api) submitted(r *http.Request, cur *config.Config) (*config.Config, error) {
+	cfg, err := a.draft(r, cur)
+	if err != nil {
+		return nil, err
+	}
+	return cfg, cfg.Validate()
+}
+
+// draft — конфиг из присланной формы с прежними токенами, но без проверки
+// полноты: форма может быть заполнена наполовину.
+func (a *api) draft(r *http.Request, cur *config.Config) (*config.Config, error) {
 	var in configForm
 	if err := decode(r, &in); err != nil {
 		return nil, fmt.Errorf("bad json: %w", err)
@@ -58,7 +99,7 @@ func (a *api) submitted(r *http.Request, cur *config.Config) (*config.Config, er
 	if err != nil {
 		return nil, err
 	}
-	if err := settings.Resolve(cur, cfg); err != nil {
+	if err := settings.CarryTokens(cur, cfg); err != nil {
 		return nil, err
 	}
 	return cfg, nil

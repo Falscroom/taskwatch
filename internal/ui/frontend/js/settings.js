@@ -3,7 +3,7 @@
 // Что форма заполнена правильно, решает сервер — его ошибку показываем как есть.
 import { api } from "./api.js";
 import { $, busy, toast } from "./dom.js";
-import { FIELDS, inputsFor, payload, probeHTML } from "./form.js";
+import { boardsHTML, FIELDS, inputsFor, payload, probeHTML } from "./form.js";
 import { state } from "./store.js";
 
 /** @typedef {import("./form.js").ConfigForm} ConfigForm */
@@ -20,6 +20,7 @@ function fill(/** @type {ConfigForm} */ cfg) {
     if (v.placeholder !== undefined) el.placeholder = v.placeholder;
   }
   $("settings-probe").hidden = true;
+  $("yt-boards").hidden = true;
 }
 
 function read() {
@@ -68,4 +69,17 @@ export async function testSettings(btn) {
   } finally {
     btn.textContent = "Проверить";
   }
+}
+
+/** pickBoards показывает доски YouTrack с текущим спринтом по адресу и токену из формы. */
+export async function pickBoards(/** @type {HTMLButtonElement} */ btn) {
+  const boards = await busy(btn, () => api("/api/config/boards", read()));
+  $("yt-boards").innerHTML = boardsHTML(boards);
+  $("yt-boards").hidden = false;
+}
+
+/** useBoard подставляет запрос тасок выбранной доски. */
+export function useBoard(/** @type {HTMLElement} */ el) {
+  input("yt-query").value = el.dataset.query || "";
+  $("yt-boards").hidden = true;
 }

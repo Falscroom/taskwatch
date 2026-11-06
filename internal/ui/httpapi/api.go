@@ -41,6 +41,7 @@ func Handler(eng *engine.Engine, svc *settings.Service, openURL func(string) err
 	mux.HandleFunc("GET /api/config", a.getConfig)
 	mux.HandleFunc("POST /api/config", a.saveConfig)
 	mux.HandleFunc("POST /api/config/test", a.testConfig)
+	mux.HandleFunc("POST /api/config/boards", a.boards)
 	mux.Handle("/", assets)
 	return mux
 }

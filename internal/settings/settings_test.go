@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"taskwatch/internal/config"
+	"taskwatch/internal/integrations/youtrack"
 	"taskwatch/internal/testutil/fakeapi"
 	"taskwatch/internal/testutil/fakesecrets"
 )
@@ -215,5 +216,38 @@ func TestProbe(t *testing.T) {
 	gl, yt = Test(context.Background(), cfg)
 	if gl.Err == nil || yt.Err == nil || !strings.Contains(gl.Err.Error(), "401") {
 		t.Errorf("gl = %+v, yt = %+v", gl, yt)
+	}
+}
+
+func TestBoards(t *testing.T) {
+	srv := fakeapi.New(t)
+	srv.SetAgiles(
+		youtrack.Agile{Name: "team b", CurrentSprint: &youtrack.Sprint{Name: "Sprint 7"}},
+		youtrack.Agile{Name: "Kanban"},
+		youtrack.Agile{Name: "Team A", CurrentSprint: &youtrack.Sprint{Name: "Sprint 42"}},
+	)
+
+	cfg := config.Default("/x/config.yaml")
+	if _, err := Boards(context.Background(), cfg); !errors.Is(err, ErrNoYouTrack) {
+		t.Errorf("without YouTrack: err = %v", err)
+	}
+
+	// Логин и запрос не нужны: их как раз подбирают.
+	cfg.YouTrack = config.YouTrack{URL: srv.URL, Token: "t"}
+	got, err := Boards(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Board{
+		{Name: "Team A", Sprint: "Sprint 42", Query: "for: me Board Team A: {Current sprint}"},
+		{Name: "team b", Sprint: "Sprint 7", Query: "for: me Board team b: {Current sprint}"},
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("boards = %+v", got)
+	}
+
+	srv.FailWith(401)
+	if _, err := Boards(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "401") {
+		t.Errorf("failure: err = %v", err)
 	}
 }

@@ -125,7 +125,8 @@ taskwatch [-config path] [-addr host:port] <command>
 - `engine` получает клиентов через `Factory` (её реализует `app.Deps`), а UI узнаёт
   о новостях через `Subscribe` и `Version`/`WaitUpdate`. Поэтому движок тестируется на
   поддельном API без окна.
-- Клиентов для опроса создаёт только `app`; `settings` создаёт их лишь для кнопки «Проверить».
+- Клиентов для опроса создаёт только `app`; `settings` создаёт их лишь для кнопок
+  «Проверить» и «Подобрать» (доски YouTrack для запроса тасок).
 - macOS (`keychain`, `macnotify`) подключается только в `cmd/taskwatch`. Тесты и демо
   подставляют `fakesecrets` и запись в лог.
 - `testutil/*` импортируют только тесты и `cmd/taskwatch-demo`.

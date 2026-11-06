@@ -59,6 +59,31 @@ func TestComments(t *testing.T) {
 	}
 }
 
+func TestAgiles(t *testing.T) {
+	var got *http.Request
+	c := server(t, func(w http.ResponseWriter, r *http.Request) {
+		got = r
+		_, _ = w.Write([]byte(`[{"name":"Team A","currentSprint":{"name":"Sprint 42"}},{"name":"Kanban","currentSprint":null}]`))
+	})
+	agiles, err := c.Agiles(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.URL.Path != "/api/agiles" || got.URL.Query().Get("fields") != "name,currentSprint(name)" {
+		t.Errorf("request = %s?%s", got.URL.Path, got.URL.RawQuery)
+	}
+	if len(agiles) != 2 || agiles[0].Name != "Team A" || agiles[0].CurrentSprint == nil ||
+		agiles[0].CurrentSprint.Name != "Sprint 42" || agiles[1].CurrentSprint != nil {
+		t.Errorf("agiles = %+v", agiles)
+	}
+}
+
+func TestSprintQuery(t *testing.T) {
+	if got := SprintQuery("Team A"); got != "for: me Board Team A: {Current sprint}" {
+		t.Errorf("SprintQuery = %q", got)
+	}
+}
+
 func TestCommandIsPostedOnceWithoutRetry(t *testing.T) {
 	var calls atomic.Int32
 	var body map[string]any

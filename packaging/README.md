@@ -28,8 +28,10 @@
 
 - **GitLab**: URL типа `https://gitlab.example.com`, логин, personal access token с правом
   `read_api` (GitLab → Settings → Access Tokens).
-- **YouTrack**: URL, логин, permanent token (`perm:...`) и запрос тасок спринта вроде
-  `for: me Sprint: {Current sprint}`.
+- **YouTrack**: URL, логин, permanent token (`perm:...`; YouTrack → аватар → Profile →
+  Account Security → New token, scope YouTrack) и запрос тасок. Запрос проще не писать
+  руками: впиши URL и токен, нажми «Подобрать» и выбери свою доску — подставится
+  `for: me Board <доска>: {Current sprint}`, то есть твои таски текущего спринта.
 - **Правила**:
   - сколько апрувов нужно, в каком статусе таска ждёт ревью и какой командой YouTrack её
     переводить дальше (например, `State Ready for QA`);

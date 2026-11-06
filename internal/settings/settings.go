@@ -1,14 +1,16 @@
 // Package settings — сценарии вокруг настроек: загрузить конфиг вместе с токенами,
-// сохранить форму, проверить связь с сервисами. Токены живут в хранилище секретов
-// (Связка ключей), в yaml — только настройки.
+// сохранить форму, проверить связь с сервисами, подобрать запрос тасок. Токены
+// живут в хранилище секретов (Связка ключей), в yaml — только настройки.
 package settings
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log"
 	"net/url"
+	"slices"
 	"strings"
 
 	"taskwatch/internal/config"
@@ -93,12 +95,21 @@ func (s *Service) migrateLegacyTokens(cfg *config.Config) {
 	}
 }
 
-// Resolve готовит конфиг из формы к сохранению. Форма не знает токенов (GET
-// их не отдаёт), поэтому пустой токен значит «оставить прежний». Прежний токен
-// переносится только на тот же адрес сервиса: при смене URL его надо ввести
-// заново, иначе он уйдёт на новый хост. Очищенный URL — сервис выключают,
-// токен не переносится.
+// Resolve готовит конфиг из формы к сохранению: переносит прежние токены
+// (CarryTokens) и проверяет, что каждый сервис пуст или заполнен целиком.
 func Resolve(cur, next *config.Config) error {
+	if err := CarryTokens(cur, next); err != nil {
+		return err
+	}
+	return next.Validate()
+}
+
+// CarryTokens подставляет в конфиг из формы прежние токены. Форма не знает
+// токенов (GET их не отдаёт), поэтому пустой токен значит «оставить прежний».
+// Прежний токен переносится только на тот же адрес сервиса: при смене URL его
+// надо ввести заново, иначе он уйдёт на новый хост. Очищенный URL — сервис
+// выключают, токен не переносится.
+func CarryTokens(cur, next *config.Config) error {
 	var errs []error
 	carry := func(name, curURL, nextURL, curToken string, nextToken *string) {
 		switch {
@@ -111,10 +122,7 @@ func Resolve(cur, next *config.Config) error {
 	}
 	carry("gitlab", cur.GitLab.URL, next.GitLab.URL, cur.GitLab.Token, &next.GitLab.Token)
 	carry("youtrack", cur.YouTrack.URL, next.YouTrack.URL, cur.YouTrack.Token, &next.YouTrack.Token)
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return next.Validate()
+	return errors.Join(errs...)
 }
 
 // sameEndpoint — адреса указывают на одно и то же: регистр хоста и
@@ -175,4 +183,35 @@ func Test(ctx context.Context, cfg *config.Config) (gl, yt Probe) {
 		yt = Probe{User: login, Err: err}
 	}
 	return gl, yt
+}
+
+// ErrNoYouTrack — для списка досок не хватает адреса или токена YouTrack.
+var ErrNoYouTrack = errors.New("заполни URL и токен YouTrack")
+
+// Board — доска YouTrack с идущим спринтом и запрос тасок этого спринта.
+type Board struct {
+	Name   string
+	Sprint string
+	Query  string
+}
+
+// Boards — доски YouTrack с текущим спринтом, по алфавиту: из них форма
+// подставляет запрос тасок. Нужны только адрес и токен — логин и запрос
+// как раз ещё не заполнены.
+func Boards(ctx context.Context, cfg *config.Config) ([]Board, error) {
+	if cfg.YouTrack.URL == "" || cfg.YouTrack.Token == "" {
+		return nil, ErrNoYouTrack
+	}
+	agiles, err := youtrack.New(cfg.YouTrack.URL, cfg.YouTrack.Token).Agiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Board
+	for _, a := range agiles {
+		if a.CurrentSprint != nil {
+			out = append(out, Board{Name: a.Name, Sprint: a.CurrentSprint.Name, Query: youtrack.SprintQuery(a.Name)})
+		}
+	}
+	slices.SortFunc(out, func(a, b Board) int { return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
+	return out, nil
 }

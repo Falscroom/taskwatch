@@ -46,6 +46,7 @@ type Server struct {
 	mine     []MR
 	reviews  []MR
 	issues   []Issue
+	agiles   []youtrack.Agile
 	requests []string
 	commands []Command
 	failCode int
@@ -78,6 +79,9 @@ func (s *Server) SetReviews(mrs ...MR) { s.mu.Lock(); s.reviews = mrs; s.mu.Unlo
 
 // SetIssues задаёт таски, которые вернёт любой запрос задач.
 func (s *Server) SetIssues(issues ...Issue) { s.mu.Lock(); s.issues = issues; s.mu.Unlock() }
+
+// SetAgiles задаёт agile-доски YouTrack.
+func (s *Server) SetAgiles(agiles ...youtrack.Agile) { s.mu.Lock(); s.agiles = agiles; s.mu.Unlock() }
 
 // FailWith заставляет все запросы отвечать этим статусом; 0 — снова отвечать нормально.
 func (s *Server) FailWith(code int) { s.mu.Lock(); s.failCode = code; s.mu.Unlock() }
@@ -184,6 +188,11 @@ func (s *Server) routes() http.Handler {
 		}
 		s.mu.Unlock()
 		write(w, out)
+	})
+	mux.HandleFunc("GET /api/agiles", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		write(w, nonNil(s.agiles))
 	})
 	mux.HandleFunc("GET /api/issues/{id}/comments", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()

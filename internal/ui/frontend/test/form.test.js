@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FIELDS, inputsFor, payload, probeHTML } from "../js/form.js";
+import { boardsHTML, FIELDS, inputsFor, payload, probeHTML } from "../js/form.js";
 
 const cfg = {
   configPath: "/x/config.yaml", configured: true, pollInterval: "2m0s",
@@ -51,4 +51,11 @@ test("probeHTML", () => {
   assert.match(html, /class="ok">✓ GitLab — @me/);
   assert.match(html, /YouTrack не заполнен/);
   assert.match(probeHTML({ gitlab: { error: "<401>" }, youtrack: { skipped: true } }), /✗ GitLab: &lt;401&gt;/);
+});
+
+test("boardsHTML", () => {
+  const html = boardsHTML([{ name: "Team <A>", sprint: "Sprint 42", query: 'for: me Board Team <A>: {Current sprint}' }]);
+  assert.match(html, /data-action="board-pick" data-query="for: me Board Team &lt;A&gt;: \{Current sprint\}"/);
+  assert.match(html, />Team &lt;A&gt;<span class="sprint">Sprint 42<\/span>/);
+  assert.match(boardsHTML([]), /Нет досок с текущим спринтом/);
 });

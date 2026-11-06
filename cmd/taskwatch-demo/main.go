@@ -121,6 +121,11 @@ func seed(srv *fakeapi.Server) {
 		fakeapi.Issue{Issue: youtrack.Issue{ID: "APP-104", Summary: "Поправить вёрстку профиля", CustomFields: state("Open")}},
 		fakeapi.Issue{Issue: youtrack.Issue{ID: "APP-99", Summary: "Лимиты API", CustomFields: state("Done")}},
 	)
+	srv.SetAgiles(
+		youtrack.Agile{Name: "Команда А", CurrentSprint: &youtrack.Sprint{Name: "Спринт 42"}},
+		youtrack.Agile{Name: "Мобилка", CurrentSprint: &youtrack.Sprint{Name: "Sprint 7"}},
+		youtrack.Agile{Name: "Поддержка"},
+	)
 	srv.SetMine(
 		fakeapi.MR{MergeRequest: mr(1, "Вход по SSO", "feature/app-101-sso", func(m *gitlab.MergeRequest) {
 			m.HeadPipeline.Status = "failed"

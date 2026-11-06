@@ -200,6 +200,12 @@ h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
 .settings-form legend { color: var(--muted); font-size: 12px; font-weight: 600; padding: 0 6px; }
 .settings-form label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
 .settings-form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.settings-form .query { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; }
+.boards { display: grid; gap: 4px; }
+.boards .board { padding: 8px 12px; border-radius: 10px; background: var(--card); text-align: left; font-size: 12.5px; color: var(--text); }
+.boards .board:hover { background: var(--card-hover); }
+.boards .sprint { color: var(--muted); margin-left: 6px; }
+.boards .skip { color: var(--grey); font-size: 12px; padding: 4px 2px; }
 .settings-form input {
   width: 100%;
   font: inherit; color: var(--text);

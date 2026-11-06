@@ -107,6 +107,18 @@ export function payload(read) {
 }
 
 /**
+ * boardsHTML — доски с текущим спринтом для кнопки «Подобрать»: клик по доске
+ * подставляет её запрос тасок.
+ * @param {{name: string, sprint: string, query: string}[]} boards
+ */
+export function boardsHTML(boards) {
+  if (!boards.length) return `<div class="skip">Нет досок с текущим спринтом — впиши запрос сам</div>`;
+  return boards
+    .map((b) => `<button type="button" class="board" data-action="board-pick" data-query="${esc(b.query)}">${esc(b.name)}<span class="sprint">${esc(b.sprint)}</span></button>`)
+    .join("");
+}
+
+/**
  * probeHTML — итог кнопки «Проверить».
  * @param {Record<"gitlab" | "youtrack", {ok?: boolean, user?: string, error?: string, skipped?: boolean}>} results
  */
