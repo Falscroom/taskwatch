@@ -5,10 +5,7 @@ import (
 	"log"
 	"os"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
@@ -88,62 +85,29 @@ func TestNotifierFallsBackOutsideBundle(t *testing.T) {
 	}
 }
 
-// Сразу после запуска macOS отвечает «не разрешено» и только потом — как есть:
-// событие откладывается, а когда разрешение приходит, опрос проходит заново.
-func TestPermittedWaitsForPermission(t *testing.T) {
-	defer func(w, p time.Duration) { permissionWait, permissionPoll = w, p }(permissionWait, permissionPoll)
-	permissionWait, permissionPoll = time.Second, time.Millisecond
-
-	var asks atomic.Int32
-	refreshed := make(chan struct{}, 1)
-	n := &Notifier{
-		check:     func() (bool, error) { return asks.Add(1) > 3, nil },
-		onAllowed: func() { refreshed <- struct{}{} },
-	}
-	if n.permitted() {
-		t.Fatal("the first answer is «not allowed»")
-	}
-	select {
-	case <-refreshed:
-	case <-time.After(time.Second):
-		t.Fatal("no refresh after the permission arrived")
-	}
-	if !n.permitted() {
-		t.Error("permission arrived — must show now")
-	}
-}
-
-// Разрешения так и не дали — одна строка в логе, без повторов.
-func TestPermittedTurnedOff(t *testing.T) {
-	defer func(w, p time.Duration) { permissionWait, permissionPoll = w, p }(permissionWait, permissionPoll)
-	permissionWait, permissionPoll = 20*time.Millisecond, time.Millisecond
-	var buf syncBuffer
+// Отказ в отправке — уведомления выключены: событие откладывается, в логе одна
+// строка; другая ошибка уходит наверх как есть, а успех снова взводит
+// предупреждение на случай, если уведомления выключат позже.
+func TestRefused(t *testing.T) {
+	var buf strings.Builder
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
 
-	n := &Notifier{check: func() (bool, error) { return false, nil }}
+	n := &Notifier{}
+	off := errors.New("Error: Notifications are not allowed for this application")
 	for range 2 {
-		if n.permitted() {
-			t.Fatal("notifications are off")
-		}
-		for n.waiting.Load() {
-			time.Sleep(time.Millisecond)
+		if err := n.refused(off); !errors.Is(err, alerts.ErrRetryLater) {
+			t.Fatalf("refused send = %v, want ErrRetryLater", err)
 		}
 	}
 	if c := strings.Count(buf.String(), "уведомления taskwatch выключены"); c != 1 {
 		t.Errorf("warnings = %d, want one:\n%s", c, buf.String())
 	}
+	other := errors.New("sending notification timed out")
+	if err := n.refused(other); !errors.Is(err, other) {
+		t.Errorf("other error = %v", err)
+	}
+	if err := n.refused(nil); err != nil || n.warned.Load() {
+		t.Errorf("success: err = %v, warned = %v", err, n.warned.Load())
+	}
 }
-
-// syncBuffer — лог из фоновой горутины без гонок.
-type syncBuffer struct {
-	mu sync.Mutex
-	b  strings.Builder
-}
-
-func (s *syncBuffer) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.b.Write(p)
-}
-func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
