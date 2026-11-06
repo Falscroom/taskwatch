@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"taskwatch/internal/alerts"
 	"taskwatch/internal/app"
 	"taskwatch/internal/config"
 	"taskwatch/internal/engine"
@@ -72,17 +73,18 @@ func run(addr string, inTray bool) error {
 	if err != nil {
 		return err
 	}
-	notify := func(title, message, url, group string) error {
-		log.Printf("уведомление: %s — %s", title, message)
+	// Демо не в бандле: Центр уведомлений недоступен, уведомления — в лог.
+	notifier := tray.NewNotifier(func(ev alerts.Event) error {
+		log.Printf("уведомление: %s · %s — %s", ev.Title, ev.Subtitle, ev.Body)
 		return nil
-	}
-	eng := engine.New(cfg, store, notify, app.Deps)
+	})
+	eng := engine.New(cfg, store, notifier.Notify, app.Deps)
 	svc := settings.New(path, fakesecrets.New(map[string]string{settings.AccountGitLab: "demo", settings.AccountYouTrack: "demo"}))
 
 	if inTray {
 		// Цикл опроса tray запускает сам; выход — «Выйти» в меню иконки.
 		log.Printf("демо в меню-баре (поддельные GitLab и YouTrack на %s)", srv.URL)
-		return tray.Run(eng, svc)
+		return tray.Run(eng, svc, notifier)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

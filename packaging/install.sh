@@ -18,21 +18,21 @@ DEST="$HOME/.local/share/taskwatch"
 mkdir -p "$DEST"
 
 # Разворачиваем состав пакета в DEST; папка с архивом остаётся нетронутой.
-for f in taskwatch com.taskwatch.plist config.example.yaml README.md install.sh uninstall.sh; do
+rm -rf "$DEST/taskwatch.app" "$DEST/taskwatch"  # taskwatch — голый бинарь прежних версий
+cp -R taskwatch.app "$DEST/"
+for f in com.taskwatch.plist config.example.yaml README.md install.sh uninstall.sh; do
   if [[ -f "$f" ]]; then
     cp -f "$f" "$DEST/"
   fi
 done
-chmod +x "$DEST/taskwatch" "$DEST/install.sh" "$DEST/uninstall.sh"
+chmod +x "$DEST/install.sh" "$DEST/uninstall.sh"
 
 # Снимаем карантин строго внутри DEST.
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 
 mkdir -p "$HOME/.local/bin" "$HOME/.config/taskwatch" "$HOME/Library/LaunchAgents"
-cp -f "$DEST/taskwatch" "$HOME/.local/bin/taskwatch"
-chmod +x "$HOME/.local/bin/taskwatch"
-# cp может протащить карантин на копию — снимаем точечно с единственного файла.
-xattr -d com.apple.quarantine "$HOME/.local/bin/taskwatch" 2>/dev/null || true
+# Команда taskwatch в терминале — ссылка на бинарь внутри приложения.
+ln -sfn "$DEST/taskwatch.app/Contents/MacOS/taskwatch" "$HOME/.local/bin/taskwatch"
 
 PLIST="$HOME/Library/LaunchAgents/com.taskwatch.plist"
 sed "s|__HOME__|$HOME|g" "$DEST/com.taskwatch.plist" > "$PLIST"
@@ -44,6 +44,7 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo ""
 echo "Готово: иконка taskwatch появится в строке меню через пару секунд."
 echo "Установка развёрнута в: $DEST"
+echo "macOS спросит, можно ли taskwatch присылать уведомления, — нажми «Разрешить»."
 echo "Дальше: шестерёнка в окне → заполни GitLab (url, логин, токен read_api);"
 echo "токен сохранится в Связке ключей, а не в конфиге."
 echo "YouTrack можно добавить позже — достаточно одного заполненного сервиса."

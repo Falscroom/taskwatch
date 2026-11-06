@@ -188,7 +188,7 @@ func (b builder) own(task *domain.Task, mr *domain.MR) Card {
 		}
 	case domain.StageReady:
 		if b.policy.CanTransition() {
-			c.Action = &Action{Label: actionLabel(b.policy.NextCommand), IssueID: task.ID}
+			c.Action = &Action{Label: domain.TransitionLabel(b.policy.NextCommand), IssueID: task.ID}
 		}
 	case domain.StageWaiting:
 		c.Wait, c.waitHours = wait(mr, b.now)
@@ -349,12 +349,4 @@ func wait(mr *domain.MR, now time.Time) (string, int) {
 		return fmt.Sprintf("%dч", h), h
 	}
 	return "", 0
-}
-
-// actionLabel: "State Ready for QA" → "Ready for QA"
-func actionLabel(command string) string {
-	if rest, ok := strings.CutPrefix(command, "State "); ok {
-		return rest
-	}
-	return command
 }

@@ -25,11 +25,11 @@ type recorder struct {
 	fail bool
 }
 
-func (r *recorder) notify(title, message, url, group string) error {
+func (r *recorder) notify(ev Event) error {
 	if r.fail {
 		return errors.New("unavailable")
 	}
-	r.sent = append(r.sent, Event{Key: group, Title: title, Message: message, URL: url})
+	r.sent = append(r.sent, ev)
 	return nil
 }
 
@@ -42,7 +42,7 @@ func keys(events []Event) string {
 }
 
 var events = []Event{
-	{Key: "task", Title: "T", Message: "m", URL: "u"},
+	{Key: "task", Title: "T", Body: "m", URL: "u"},
 	{Key: "mr1", MRID: 1},
 	{Key: "mr2", MRID: 2},
 }
@@ -55,7 +55,7 @@ func TestDispatchSendsOnce(t *testing.T) {
 	if keys(r.sent) != "task,mr1,mr2" || l["task"] != 1 {
 		t.Errorf("sent = %s, ledger = %v", keys(r.sent), l)
 	}
-	if s := r.sent[0]; s.Title != "T" || s.Message != "m" || s.URL != "u" {
+	if s := r.sent[0]; s.Title != "T" || s.Body != "m" || s.URL != "u" {
 		t.Errorf("notification = %+v", s)
 	}
 }
@@ -96,20 +96,25 @@ func TestDispatchFailedNotificationIsRetried(t *testing.T) {
 }
 
 func TestDispatchAutoTransition(t *testing.T) {
-	ev := []Event{{Key: "approved:1", MRID: 1, Message: "Пора переводить дальше", Transition: &Transition{IssueID: "ABC-1", Command: "State QA"}}}
+	ev := []Event{{Key: "approved:1", MRID: 1, Body: "Пора переводить", Transition: &Transition{IssueID: "ABC-1", Command: "State QA"}}}
 
 	var calls []string
 	ok := func(ctx context.Context, issue, cmd string) error { calls = append(calls, issue+"/"+cmd); return nil }
 	r := &recorder{}
 	Dispatcher{Ledger: ledger{}, Notify: r.notify, AutoTransition: ok}.Dispatch(context.Background(), ev)
-	if strings.Join(calls, ",") != "ABC-1/State QA" || r.sent[0].Message != "Переведена: State QA" {
+	// Переведено — кнопка «перевести» в уведомлении уже не нужна.
+	if s := r.sent[0]; strings.Join(calls, ",") != "ABC-1/State QA" || s.Title != "Переведена в QA" || s.Transition != nil {
 		t.Errorf("calls = %v, sent = %+v", calls, r.sent)
+	}
+	if ev[0].Transition == nil {
+		t.Error("dispatch changed the caller's event")
 	}
 
 	failing := func(ctx context.Context, issue, cmd string) error { return errors.New("403") }
 	r = &recorder{}
 	Dispatcher{Ledger: ledger{}, Notify: r.notify, AutoTransition: failing}.Dispatch(context.Background(), ev)
-	if r.sent[0].Message != "Не удалось перевести автоматически: 403" {
+	// Не вышло — кнопка остаётся: можно перевести руками из уведомления.
+	if s := r.sent[0]; s.Body != "Не удалось перевести автоматически: 403" || s.Transition == nil {
 		t.Errorf("sent = %+v", r.sent)
 	}
 

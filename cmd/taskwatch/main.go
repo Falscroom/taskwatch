@@ -9,10 +9,12 @@ import (
 	"log"
 	"os"
 
+	"taskwatch/internal/alerts"
 	"taskwatch/internal/config"
 	"taskwatch/internal/platform/keychain"
 	"taskwatch/internal/platform/macnotify"
 	"taskwatch/internal/settings"
+	"taskwatch/internal/ui/tray"
 )
 
 func main() {
@@ -31,9 +33,17 @@ func main() {
 		os.Exit(2)
 	}
 
+	// В taskwatch.app уведомления идут через Центр уведомлений; вне бандла и
+	// в режимах без окна — через osascript.
+	notifier := tray.NewNotifier(func(ev alerts.Event) error {
+		return macnotify.Send(macnotify.Notification{
+			Title: ev.Title, Subtitle: ev.Subtitle, Body: ev.Body, URL: ev.URL, Group: ev.Key,
+		})
+	})
 	err := execute(cmd, setup{
 		settings: settings.New(*configPath, settings.WithEnv(keychain.Store{})),
-		notify:   macnotify.Send,
+		notify:   notifier.Notify,
+		notifier: notifier,
 		addr:     *addr,
 	})
 	if err != nil {

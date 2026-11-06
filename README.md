@@ -13,11 +13,13 @@
 
 ```bash
 make build    # bin/taskwatch
+make app      # bin/taskwatch.app — бинарь + Info.plist + иконка, подпись ad-hoc
+make icon     # пересобрать packaging/taskwatch.icns из генератора packaging/icon
 make check    # vet + lint + test + тесты фронтенда — должно быть зелёным перед коммитом
 make demo     # окно в браузере на поддельных GitLab/YouTrack: http://127.0.0.1:7778
 make demo-app # то же демо в меню-баре, в настоящем окне Wails
 make dist     # dist/taskwatch-mac.zip для раздачи
-make install  # поставить себе как LaunchAgent
+make install  # поставить себе taskwatch.app как LaunchAgent
 ```
 
 Тесты не трогают настоящую Связку ключей и не шлют настоящих уведомлений: вместо них
@@ -49,6 +51,7 @@ taskwatch [-config path] [-addr host:port] <command>
 | Токены | Связка ключей, сервис `com.taskwatch`, аккаунты `gitlab` и `youtrack` |
 | Токены в обход Связки ключей | `TASKWATCH_GITLAB_TOKEN`, `TASKWATCH_YOUTRACK_TOKEN` — env главнее |
 | Отправленные уведомления, заглушения, счётчики прошлого опроса | `state.json` рядом с конфигом |
+| Установленное приложение | `~/.local/share/taskwatch/taskwatch.app`, команда `~/.local/bin/taskwatch` — ссылка на его бинарь |
 | Лог LaunchAgent'а | `~/.config/taskwatch/taskwatch.log` |
 
 Для ручных прогонов на своём конфиге задавай **оба** env-токена: тогда Связка ключей
@@ -87,6 +90,13 @@ taskwatch [-config path] [-addr host:port] <command>
    на первом запуске — только помечает (чтобы не завалить старым), остальное —
    переводит таску (если включён авто-перевод) и показывает. Неудачная доставка
    не помечается и повторится в следующий проход.
+
+   Показывает `tray.Notifier`. Внутри `taskwatch.app` — через Центр уведомлений
+   macOS: своя иконка, заголовок «что случилось», подзаголовок «таска · название»,
+   клик открывает MR или таску, кнопки «Заглушить на час» и «→ статус», стопка на
+   каждый MR, звук только у событий, которые ждут действия (`Kind.Loud`). Вне
+   бандла (`run`, `once`, `web`, демо) Центр уведомлений недоступен, и уведомления
+   идут запасным путём — `platform/macnotify` (terminal-notifier или osascript).
 4. **publish** поднимает версию и будит подписчиков: трей пересчитывает цифру,
    ожидающий long-poll отдаёт окну новый вид. Окно не опрашивает сервер по таймеру.
 
@@ -129,6 +139,9 @@ taskwatch [-config path] [-addr host:port] <command>
   «Проверить» и «Подобрать» (доски YouTrack для запроса тасок).
 - macOS (`keychain`, `macnotify`) подключается только в `cmd/taskwatch`. Тесты и демо
   подставляют `fakesecrets` и запись в лог.
+- Центр уведомлений работает только из бандла с идентификатором (`com.taskwatch`
+  в `packaging/Info.plist`). Без бандла его запуск роняет приложение Wails, поэтому
+  `tray.Notifier` запускает его сам и при ошибке остаётся на запасном пути.
 - `testutil/*` импортируют только тесты и `cmd/taskwatch-demo`.
 
 ### Паттерны
@@ -145,6 +158,7 @@ taskwatch [-config path] [-addr host:port] <command>
 | Таблица полей | `FIELDS` в `js/form.js` | форма заполняется и читается по одному описанию |
 | Делегирование событий | `data-action` + `js/actions.js` | один обработчик кликов на всё окно |
 | Атомарная запись | `platform/fsutil.WriteFileAtomic` | `config.yaml` и `state.json` не бьются при падении |
+| Запасной путь | `tray.Notifier` → `platform/macnotify` | уведомления работают и без бандла, приложение не падает |
 
 ### Окно
 
@@ -196,10 +210,12 @@ internal/            весь код приложения
   settings/          загрузка конфига с токенами, сохранение формы, проверка связи
   state/             state.json: отправленные уведомления, заглушения, счётчики
   integrations/      GitLab и YouTrack: клиенты поверх общего httpx и адаптеры для collect
-  platform/          macOS: Связка ключей, уведомления; атомарная запись файлов
+  platform/          macOS: Связка ключей, уведомления без бандла; атомарная запись файлов
   ui/httpapi/        HTTP API окна (тонкие хендлеры, long-poll /api/view) и сервер режима web
-  ui/tray/           меню-бар на Wails: иконка, окно, цифра «нужно тебе»
+  ui/tray/           меню-бар на Wails: иконка, окно, цифра «нужно тебе», уведомления
+                     Центра уведомлений с кнопками
   ui/frontend/       окно: HTML/CSS и ES-модули в js/, тесты чистых модулей в test/
   testutil/          поддельные GitLab/YouTrack и хранилище секретов для тестов
-packaging/           install.sh, uninstall.sh, plist LaunchAgent, README для коллег
+packaging/           install.sh, uninstall.sh, plist LaunchAgent, Info.plist и иконка
+                     taskwatch.app (генератор — icon/), README для коллег
 ```

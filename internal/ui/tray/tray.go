@@ -20,7 +20,8 @@ import (
 )
 
 // Run показывает иконку и окно и крутит цикл опроса, пока пользователь не выйдет.
-func Run(eng *engine.Engine, svc *settings.Service) error {
+// notifier — тот же, что отдан движку: здесь он подключается к Центру уведомлений.
+func Run(eng *engine.Engine, svc *settings.Service, notifier *Notifier) error {
 	var app *application.App
 	openURL := func(url string) error { return app.Browser.OpenURL(url) }
 
@@ -34,7 +35,9 @@ func Run(eng *engine.Engine, svc *settings.Service) error {
 		Mac: application.MacOptions{
 			ActivationPolicy: application.ActivationPolicyAccessory,
 		},
+		Services: []application.Service{application.NewService(&service{n: notifier})},
 	})
+	notifier.listen(eng, openURL)
 
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:            "taskwatch",
@@ -61,6 +64,7 @@ func Run(eng *engine.Engine, svc *settings.Service) error {
 
 	menu := app.NewMenu()
 	menu.Add("Обновить").OnClick(func(*application.Context) { eng.Refresh() })
+	menu.Add("Пример уведомления").OnClick(func(*application.Context) { notifier.sample() })
 	menu.AddSeparator()
 	menu.Add("Выйти").OnClick(func(*application.Context) { app.Quit() })
 

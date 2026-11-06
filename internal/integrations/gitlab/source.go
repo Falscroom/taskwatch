@@ -101,6 +101,7 @@ func toMR(m MergeRequest) *domain.MR {
 		Title:               m.Title,
 		WebURL:              m.WebURL,
 		SourceBranch:        m.SourceBranch,
+		TargetBranch:        m.TargetBranch,
 		State:               domain.MRState(m.State),
 		SHA:                 m.SHA,
 		CreatedAt:           m.CreatedAt,

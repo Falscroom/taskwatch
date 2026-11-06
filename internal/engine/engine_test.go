@@ -70,11 +70,11 @@ func newHarness(t *testing.T, youtrackOn bool, mutate func(*config.Config)) *har
 
 func newHarnessWith(t *testing.T, srv *fakeapi.Server, cfg *config.Config, store *state.Store) *harness {
 	h := &harness{srv: srv, cfg: cfg, store: store}
-	h.eng = New(cfg, store, func(title, message, url, key string) error {
+	h.eng = New(cfg, store, func(ev alerts.Event) error {
 		if h.failNotify {
 			return errors.New("notification center is unavailable")
 		}
-		h.sent = append(h.sent, sent{title, message, url, key})
+		h.sent = append(h.sent, sent{ev.Title, ev.Body, ev.URL, ev.Key})
 		return nil
 	}, testDeps)
 	h.eng.Subscribe(func() { h.updates++ })
@@ -187,7 +187,7 @@ func TestFailedNotificationIsRetried(t *testing.T) {
 	if !h.store.Seen("gl-note:2") || len(h.sent) != 1 {
 		t.Errorf("retry: sent = %v", h.sent)
 	}
-	if s := h.sent[0]; s.title != "Комментарий в MR a от bob" || s.message != "text" || s.url != "" || s.key != "gl-note:2" {
+	if s := h.sent[0]; s.title != "Комментарий в MR" || s.message != "bob: text" || s.url != "" || s.key != "gl-note:2" {
 		t.Errorf("notification = %+v", s)
 	}
 	h.tick(t)
@@ -369,7 +369,7 @@ func TestAutoTransition(t *testing.T) {
 	if len(cmds) != 1 || cmds[0] != (fakeapi.Command{Query: "State Ready for QA", IssueID: "ABC-1"}) {
 		t.Errorf("commands = %+v", cmds)
 	}
-	if len(h.sent) != 1 || h.sent[0].key != "approved:101" || h.sent[0].message != "Переведена: State Ready for QA" {
+	if len(h.sent) != 1 || h.sent[0].key != "approved:101" || h.sent[0].title != "Переведена в Ready for QA" {
 		t.Errorf("sent = %+v", h.sent)
 	}
 }

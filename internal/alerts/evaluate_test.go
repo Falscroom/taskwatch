@@ -58,19 +58,23 @@ func TestTaskEvents(t *testing.T) {
 		t.Fatalf("events = %v, want state + one foreign comment", got)
 	}
 	st := got["yt-state:ABC-1:In Progress"]
-	if st.Title != "ABC-1" || st.Message != "Статус: In Progress" || st.URL != tk.URL || st.MRID != 0 {
+	if st.Title != "Статус: In Progress" || st.Subtitle != "ABC-1 · Summary ABC-1" || st.URL != tk.URL ||
+		st.MRID != 0 || st.Kind != KindTaskState || st.Thread != "task:ABC-1" {
 		t.Errorf("state event = %+v", st)
 	}
 	c := got["yt-comment:c1"]
-	if c.Title != "Комментарий в ABC-1 от alice" || c.Message != "please check" || c.MRID != 0 {
+	if c.Title != "Комментарий в таске" || c.Body != "alice: please check" || c.MRID != 0 ||
+		c.Kind != KindComment || c.Thread != "task:ABC-1" {
 		t.Errorf("comment event = %+v", c)
 	}
 }
 
 func TestMREvents(t *testing.T) {
 	mr := openMR(10)
+	mr.TargetBranch = "main"
+	mr.SourceBranch = "feature/abc-1"
 	mr.Notes = []domain.Note{
-		{ID: 1, Body: "looks good", Author: domain.User{Username: "bob"}},
+		{ID: 1, Body: "looks good", Author: domain.User{Username: "bob", Name: "Bob Smith"}},
 		{ID: 2, Body: "approved this", System: true, Author: domain.User{Username: "bob"}},
 		{ID: 3, Body: "self note", Author: domain.User{Username: "me"}},
 	}
@@ -81,12 +85,12 @@ func TestMREvents(t *testing.T) {
 	t.Run("linked to task", func(t *testing.T) {
 		got := byKey(t, Evaluate(&domain.Snapshot{Tasks: []*domain.Task{task("ABC-1", "In Progress", mr)}}, testPolicy()))
 		want := map[string]string{
-			"gl-note:1":                  "Комментарий в MR ABC-1 от bob",
-			"pipeline:77:failed":         "🔴 Сборка ABC-1",
-			"conflict:10:abc":            "Конфликты в ABC-1",
-			"release:10:release/1.0":     "🚀 ABC-1 в release/1.0",
-			"release:10:release/1.1":     "🚀 ABC-1 в release/1.1",
-			"yt-state:ABC-1:In Progress": "ABC-1",
+			"gl-note:1":                  "Комментарий в MR",
+			"pipeline:77:failed":         "Сборка упала",
+			"conflict:10:abc":            "Конфликт с main",
+			"release:10:release/1.0":     "Попало в release/1.0",
+			"release:10:release/1.1":     "Попало в release/1.1",
+			"yt-state:ABC-1:In Progress": "Статус: In Progress",
 		}
 		if len(got) != len(want) {
 			t.Fatalf("got %d events %v, want %d", len(got), got, len(want))
@@ -100,24 +104,33 @@ func TestMREvents(t *testing.T) {
 			if e.Title != title {
 				t.Errorf("%s title = %q, want %q", key, e.Title, title)
 			}
-			wantMRID := 10
-			if strings.HasPrefix(key, "yt-") {
-				wantMRID = 0
+			if e.Subtitle != "ABC-1 · Summary ABC-1" {
+				t.Errorf("%s subtitle = %q", key, e.Subtitle)
 			}
-			if e.MRID != wantMRID {
-				t.Errorf("%s MRID = %d, want %d", key, e.MRID, wantMRID)
+			wantMRID, wantThread := 10, "mr:10"
+			if strings.HasPrefix(key, "yt-") {
+				wantMRID, wantThread = 0, "task:ABC-1"
+			}
+			if e.MRID != wantMRID || e.Thread != wantThread {
+				t.Errorf("%s MRID = %d, thread = %q", key, e.MRID, e.Thread)
 			}
 		}
-		if got["pipeline:77:failed"].URL != "https://gl/p/77" || got["pipeline:77:failed"].Message != "failed" {
-			t.Errorf("pipeline event = %+v", got["pipeline:77:failed"])
+		if e := got["pipeline:77:failed"]; e.URL != "https://gl/p/77" || e.Body != "Ветка feature/abc-1" || e.Kind != KindPipeline {
+			t.Errorf("pipeline event = %+v", e)
+		}
+		if e := got["gl-note:1"]; e.Body != "Bob Smith: looks good" {
+			t.Errorf("note body = %q", e.Body)
+		}
+		if e := got["conflict:10:abc"]; e.Body != "Нужен rebase или merge main" {
+			t.Errorf("conflict body = %q", e.Body)
 		}
 	})
 
-	t.Run("orphan uses MR title as label", func(t *testing.T) {
+	t.Run("orphan uses MR title as subject", func(t *testing.T) {
 		mr.ApprovedBy = approvers(5)
 		got := byKey(t, Evaluate(&domain.Snapshot{Orphans: []*domain.MR{mr}}, testPolicy()))
-		if e := got["gl-note:1"]; e.Title != "Комментарий в MR Fix login от bob" {
-			t.Errorf("note title = %q", e.Title)
+		if e := got["gl-note:1"]; e.Subtitle != "!10 · Fix login" {
+			t.Errorf("note subtitle = %q", e.Subtitle)
 		}
 		if _, ok := got["approved:10"]; ok {
 			t.Error("orphan MR must not produce approved event")
@@ -135,6 +148,25 @@ func TestPipelineEvents(t *testing.T) {
 		if _, ok := got["pipeline:5:"+string(status)]; ok != want {
 			t.Errorf("pipeline %s: event = %v, want %v", status, ok, want)
 		}
+	}
+}
+
+func TestPipelineCanceledTitle(t *testing.T) {
+	mr := openMR(1)
+	mr.Pipeline = &domain.Pipeline{ID: 5, Status: "canceled"}
+	got := byKey(t, Evaluate(&domain.Snapshot{Orphans: []*domain.MR{mr}}, testPolicy()))
+	if e := got["pipeline:5:canceled"]; e.Title != "Сборка отменена" {
+		t.Errorf("title = %q", e.Title)
+	}
+}
+
+// Без целевой ветки в ответе GitLab заголовок не ломается.
+func TestConflictWithoutTargetBranch(t *testing.T) {
+	mr := openMR(1)
+	mr.HasConflicts = true
+	got := byKey(t, Evaluate(&domain.Snapshot{Orphans: []*domain.MR{mr}}, testPolicy()))
+	if e := got["conflict:1:abc"]; e.Title != "Конфликт в MR" || e.Body != "Нужен rebase" || e.Kind != KindConflict {
+		t.Errorf("conflict event = %+v", e)
 	}
 }
 
@@ -179,8 +211,15 @@ func TestApprovedEvent(t *testing.T) {
 			if !ok {
 				return
 			}
-			if e.Title != "✅ ABC-1: "+string(rune('0'+tc.approvals))+" апрува" {
+			if e.Title != "Апрувы собраны · "+string(rune('0'+tc.approvals))+" из 2" || e.Kind != KindApproved {
 				t.Errorf("title = %q", e.Title)
+			}
+			wantBody := strings.Join(approvers(tc.approvals), ", ") + ". Пора переводить"
+			if tc.wantTransi {
+				wantBody += " в Ready for QA"
+			}
+			if e.Body != wantBody {
+				t.Errorf("body = %q, want %q", e.Body, wantBody)
 			}
 			if (e.Transition != nil) != tc.wantTransi {
 				t.Fatalf("transition = %+v, want %v", e.Transition, tc.wantTransi)
@@ -198,6 +237,7 @@ func TestApprovedEvent(t *testing.T) {
 func TestReviewEvents(t *testing.T) {
 	waiting := openMR(20)
 	waiting.Title = "Add cache"
+	waiting.Author = domain.User{Username: "anna"}
 	approved := openMR(21)
 	approved.ApprovedBy = []string{"me"}
 	// Запросил изменения — тоже своё слово сказал: «Нужно ревью» уже не нужно.
@@ -212,7 +252,8 @@ func TestReviewEvents(t *testing.T) {
 		t.Fatalf("events = %v, want review:20 and review:23", got)
 	}
 	e := got["review:20"]
-	if e.Title != "Нужно ревью" || e.Message != "Add cache" || e.URL != "https://gl/mr" || e.MRID != 20 {
+	if e.Title != "Нужно твоё ревью" || e.Subtitle != "!20 · Add cache" || e.Body != "anna" ||
+		e.URL != "https://gl/mr" || e.MRID != 20 || e.Kind != KindReview || e.Thread != "mr:20" {
 		t.Errorf("review event = %+v", e)
 	}
 	if _, ok := got["review:23"]; !ok {
@@ -231,6 +272,29 @@ func TestShort(t *testing.T) {
 	for in, want := range cases {
 		if got := short(in); got != want {
 			t.Errorf("short(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Имена апрувнувших берём у ревьюеров, логин — если имени нет.
+func TestApproverNames(t *testing.T) {
+	mr := openMR(1)
+	mr.ApprovedBy = []string{"anna", "oleg"}
+	mr.Reviewers = []domain.Reviewer{{User: domain.User{Username: "anna", Name: "Анна Смирнова"}}}
+	if got := approverNames(mr); got != "Анна Смирнова, oleg" {
+		t.Errorf("approverNames = %q", got)
+	}
+}
+
+func TestKindLoud(t *testing.T) {
+	for _, k := range []Kind{KindReview, KindPipeline, KindConflict, KindApproved} {
+		if !k.Loud() {
+			t.Errorf("kind %d must be loud", k)
+		}
+	}
+	for _, k := range []Kind{KindComment, KindTaskState, KindRelease} {
+		if k.Loud() {
+			t.Errorf("kind %d must be quiet", k)
 		}
 	}
 }

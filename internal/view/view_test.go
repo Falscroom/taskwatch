@@ -379,12 +379,3 @@ func TestInitials(t *testing.T) {
 		}
 	}
 }
-
-func TestActionLabel(t *testing.T) {
-	if got := actionLabel("State Ready for QA"); got != "Ready for QA" {
-		t.Errorf("got %q", got)
-	}
-	if got := actionLabel("tag ready"); got != "tag ready" {
-		t.Errorf("got %q", got)
-	}
-}

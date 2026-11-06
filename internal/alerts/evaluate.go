@@ -5,6 +5,7 @@ package alerts
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"taskwatch/internal/domain"
@@ -15,13 +16,36 @@ type Transition struct {
 	Command string
 }
 
+// Kind — что случилось; от него зависят звук и кнопки уведомления.
+type Kind int
+
+const (
+	KindReview    Kind = iota // тебя позвали на ревью
+	KindPipeline              // сборка упала
+	KindConflict              // конфликт с целевой веткой
+	KindApproved              // апрувы собраны
+	KindComment               // новый комментарий
+	KindTaskState             // таска сменила статус
+	KindRelease               // MR попал в релизную ветку
+)
+
+// Loud — событие требует действия, уведомлению положен звук; остальные приходят тихо.
+func (k Kind) Loud() bool {
+	return k == KindReview || k == KindPipeline || k == KindConflict || k == KindApproved
+}
+
 type Event struct {
 	// Key — стабильный ключ события; уже отправленные лежат в state.json,
 	// поэтому формат ключей менять нельзя.
-	Key        string
-	Title      string
-	Message    string
-	URL        string
+	Key  string
+	Kind Kind
+	// Title — что случилось, Subtitle — с чем (таска или MR), Body — подробности.
+	Title    string
+	Subtitle string
+	Body     string
+	URL      string
+	// Thread — события одной таски или MR: Центр уведомлений складывает их в стопку.
+	Thread     string
 	Transition *Transition
 	// MRID — MR, породивший событие; 0 у событий тасок YouTrack. Нужен для заглушений.
 	MRID int
@@ -45,22 +69,28 @@ func Evaluate(snap *domain.Snapshot, p domain.Policy) []Event {
 			continue
 		}
 		events = append(events, Event{
-			Key:     fmt.Sprintf("review:%d", mr.ID),
-			Title:   "Нужно ревью",
-			Message: mr.Title,
-			URL:     mr.WebURL,
-			MRID:    mr.ID,
+			Key:      fmt.Sprintf("review:%d", mr.ID),
+			Kind:     KindReview,
+			Title:    "Нужно твоё ревью",
+			Subtitle: subject(nil, mr),
+			Body:     displayName(mr.Author),
+			URL:      mr.WebURL,
+			Thread:   mrThread(mr),
+			MRID:     mr.ID,
 		})
 	}
 	return events
 }
 
 func taskEvents(task *domain.Task, p domain.Policy) []Event {
+	thread := "task:" + task.ID
 	events := []Event{{
-		Key:     fmt.Sprintf("yt-state:%s:%s", task.ID, task.State),
-		Title:   task.ID,
-		Message: "Статус: " + task.State,
-		URL:     task.URL,
+		Key:      fmt.Sprintf("yt-state:%s:%s", task.ID, task.State),
+		Kind:     KindTaskState,
+		Title:    "Статус: " + task.State,
+		Subtitle: subject(task, nil),
+		URL:      task.URL,
+		Thread:   thread,
 	}}
 
 	for _, c := range task.Comments {
@@ -68,10 +98,13 @@ func taskEvents(task *domain.Task, p domain.Policy) []Event {
 			continue
 		}
 		events = append(events, Event{
-			Key:     "yt-comment:" + c.ID,
-			Title:   fmt.Sprintf("Комментарий в %s от %s", task.ID, c.Author),
-			Message: short(c.Text),
-			URL:     task.URL,
+			Key:      "yt-comment:" + c.ID,
+			Kind:     KindComment,
+			Title:    "Комментарий в таске",
+			Subtitle: subject(task, nil),
+			Body:     c.Author + ": " + short(c.Text),
+			URL:      task.URL,
+			Thread:   thread,
 		})
 	}
 	return events
@@ -79,49 +112,64 @@ func taskEvents(task *domain.Task, p domain.Policy) []Event {
 
 func mrEvents(task *domain.Task, mr *domain.MR, p domain.Policy) []Event {
 	var events []Event
-	label := mr.Title
-	if task != nil {
-		label = task.ID
-	}
+	about := subject(task, mr)
 
 	for _, n := range mr.Notes {
 		if n.System || n.Author.Username == p.GitLabUser {
 			continue
 		}
 		events = append(events, Event{
-			Key:     fmt.Sprintf("gl-note:%d", n.ID),
-			Title:   fmt.Sprintf("Комментарий в MR %s от %s", label, n.Author.Username),
-			Message: short(n.Body),
-			URL:     mr.WebURL,
+			Key:      fmt.Sprintf("gl-note:%d", n.ID),
+			Kind:     KindComment,
+			Title:    "Комментарий в MR",
+			Subtitle: about,
+			Body:     displayName(n.Author) + ": " + short(n.Body),
+			URL:      mr.WebURL,
 		})
 	}
 
 	if pl := mr.Pipeline; pl.Failed() {
+		title := "Сборка упала"
+		if pl.Status == "canceled" {
+			title = "Сборка отменена"
+		}
 		events = append(events, Event{
-			Key:     fmt.Sprintf("pipeline:%d:%s", pl.ID, pl.Status),
-			Title:   "🔴 Сборка " + label,
-			Message: string(pl.Status),
-			URL:     pl.WebURL,
+			Key:      fmt.Sprintf("pipeline:%d:%s", pl.ID, pl.Status),
+			Kind:     KindPipeline,
+			Title:    title,
+			Subtitle: about,
+			Body:     "Ветка " + mr.SourceBranch,
+			URL:      pl.WebURL,
 		})
 	}
 
 	if mr.Open() && mr.HasConflicts {
-		events = append(events, Event{
-			Key:     fmt.Sprintf("conflict:%d:%s", mr.ID, mr.SHA),
-			Title:   "Конфликты в " + label,
-			Message: mr.Title,
-			URL:     mr.WebURL,
-		})
+		e := Event{
+			Key:      fmt.Sprintf("conflict:%d:%s", mr.ID, mr.SHA),
+			Kind:     KindConflict,
+			Title:    "Конфликт в MR",
+			Subtitle: about,
+			Body:     "Нужен rebase",
+			URL:      mr.WebURL,
+		}
+		if mr.TargetBranch != "" {
+			e.Title = "Конфликт с " + mr.TargetBranch
+			e.Body = "Нужен rebase или merge " + mr.TargetBranch
+		}
+		events = append(events, e)
 	}
 
 	if p.ReadyToTransition(task, mr) {
 		e := Event{
-			Key:     fmt.Sprintf("approved:%d", mr.ID),
-			Title:   fmt.Sprintf("✅ %s: %d апрува", task.ID, mr.Approvals()),
-			Message: "Пора переводить дальше",
-			URL:     task.URL,
+			Key:      fmt.Sprintf("approved:%d", mr.ID),
+			Kind:     KindApproved,
+			Title:    fmt.Sprintf("Апрувы собраны · %d из %d", mr.Approvals(), p.RequiredApprovals),
+			Subtitle: about,
+			Body:     approverNames(mr) + ". Пора переводить",
+			URL:      task.URL,
 		}
 		if p.CanTransition() {
+			e.Body += " в " + domain.TransitionLabel(p.NextCommand)
 			e.Transition = &Transition{IssueID: task.ID, Command: p.NextCommand}
 		}
 		events = append(events, e)
@@ -129,17 +177,52 @@ func mrEvents(task *domain.Task, mr *domain.MR, p domain.Policy) []Event {
 
 	for _, b := range mr.ReleaseBranches {
 		events = append(events, Event{
-			Key:     fmt.Sprintf("release:%d:%s", mr.ID, b),
-			Title:   fmt.Sprintf("🚀 %s в %s", label, b),
-			Message: mr.Title,
-			URL:     mr.WebURL,
+			Key:      fmt.Sprintf("release:%d:%s", mr.ID, b),
+			Kind:     KindRelease,
+			Title:    "Попало в " + b,
+			Subtitle: about,
+			URL:      mr.WebURL,
 		})
 	}
-	// Все события этого MR помечаем его id — по нему движок сверяет заглушения.
+	// Все события этого MR помечаем его id — по нему движок сверяет заглушения —
+	// и складываем в одну стопку.
 	for i := range events {
 		events[i].MRID = mr.ID
+		events[i].Thread = mrThread(mr)
 	}
 	return events
+}
+
+// subject — с чем событие: таска, а если её нет — MR.
+func subject(task *domain.Task, mr *domain.MR) string {
+	if task != nil {
+		return task.ID + " · " + task.Summary
+	}
+	return "!" + strconv.Itoa(mr.IID) + " · " + mr.Title
+}
+
+func mrThread(mr *domain.MR) string { return domain.MRKey(mr.ID) }
+
+func displayName(u domain.User) string {
+	if u.Name != "" {
+		return u.Name
+	}
+	return u.Username
+}
+
+// approverNames — кто апрувнул; имена берём у ревьюеров, где они есть.
+func approverNames(mr *domain.MR) string {
+	names := make([]string, 0, len(mr.ApprovedBy))
+	for _, login := range mr.ApprovedBy {
+		name := login
+		for _, r := range mr.Reviewers {
+			if r.User.Username == login && r.User.Name != "" {
+				name = r.User.Name
+			}
+		}
+		names = append(names, name)
+	}
+	return strings.Join(names, ", ")
 }
 
 func short(s string) string {

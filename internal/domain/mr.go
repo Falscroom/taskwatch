@@ -65,6 +65,7 @@ type MR struct {
 	WebURL    string
 	// SourceBranch — ветка MR; по ней (или по заголовку) MR находит свою таску.
 	SourceBranch string
+	TargetBranch string
 	State        MRState
 	// SHA — головной коммит; меняется с каждым пушем.
 	SHA       string

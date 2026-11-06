@@ -46,31 +46,31 @@ func (f *fake) sender() sender {
 
 func TestPrefersTerminalNotifier(t *testing.T) {
 	f := &fake{hasNotifier: true}
-	if err := f.sender().send("T", "M", "https://x", "key:1"); err != nil {
+	if err := f.sender().send(Notification{Title: "T", Subtitle: "S", Body: "M", URL: "https://x", Group: "key:1"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.calls) != 1 || f.calls[0] != "/bin/terminal-notifier -title T -message M -group key:1 -open https://x" {
+	if len(f.calls) != 1 || f.calls[0] != "/bin/terminal-notifier -title T -message M -group key:1 -subtitle S -open https://x" {
 		t.Errorf("calls = %q", f.calls)
 	}
 }
 
 func TestFallsBackToOsascript(t *testing.T) {
 	f := &fake{hasNotifier: true, failing: map[string]bool{"/bin/terminal-notifier": true}}
-	if err := f.sender().send("T", `say "hi"`, "", "g"); err != nil {
+	if err := f.sender().send(Notification{Title: "T", Subtitle: "S", Body: `say "hi"`, Group: "g"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.calls) != 2 || f.calls[1] != `osascript -e display notification "say \"hi\"" with title "T"` {
+	if len(f.calls) != 2 || f.calls[1] != `osascript -e display notification "say \"hi\"" with title "T" subtitle "S"` {
 		t.Errorf("calls = %q", f.calls)
 	}
 
 	f = &fake{}
-	_ = f.sender().send("T", "M", "", "g")
-	if len(f.calls) != 1 || !strings.HasPrefix(f.calls[0], "osascript") {
+	_ = f.sender().send(Notification{Title: "T", Body: "M", Group: "g"})
+	if len(f.calls) != 1 || f.calls[0] != `osascript -e display notification "M" with title "T"` {
 		t.Errorf("without terminal-notifier: calls = %q", f.calls)
 	}
 
 	f = &fake{failing: map[string]bool{"osascript": true}}
-	if err := f.sender().send("T", "M", "", "g"); err == nil {
+	if err := f.sender().send(Notification{Title: "T", Body: "M", Group: "g"}); err == nil {
 		t.Error("want error when every way fails")
 	}
 }

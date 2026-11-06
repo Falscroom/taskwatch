@@ -162,6 +162,15 @@ func TestReadyToTransition(t *testing.T) {
 	}
 }
 
+func TestTransitionLabel(t *testing.T) {
+	if got := TransitionLabel("State Ready for QA"); got != "Ready for QA" {
+		t.Errorf("got %q", got)
+	}
+	if got := TransitionLabel("tag ready"); got != "tag ready" {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestStages(t *testing.T) {
 	p := policy()
 	task := &Task{State: "Code Review"}

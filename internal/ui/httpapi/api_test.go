@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"taskwatch/internal/alerts"
 	"taskwatch/internal/app"
 	"taskwatch/internal/config"
 	"taskwatch/internal/engine"
@@ -54,7 +55,7 @@ func newAPI(t *testing.T, cfg *config.Config) *apiHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	noop := func(title, message, url, key string) error { return nil }
+	noop := func(alerts.Event) error { return nil }
 	eng := engine.New(cfg, store, noop, app.Deps)
 	h := &apiHarness{eng: eng, configPath: path, secrets: fakesecrets.New(nil)}
 	assets := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "asset:"+r.URL.Path) })

@@ -70,6 +70,7 @@ func usage() string {
 type setup struct {
 	settings *settings.Service
 	notify   alerts.Notifier
+	notifier *tray.Notifier // для режима app: тот же notify, подключённый к Центру уведомлений
 	addr     string
 }
 
@@ -97,7 +98,7 @@ func execute(cmd command, s setup) error {
 	return cmd.run(e)
 }
 
-func runApp(e env) error { return tray.Run(e.eng, e.settings) }
+func runApp(e env) error { return tray.Run(e.eng, e.settings, e.notifier) }
 
 func runWeb(e env) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

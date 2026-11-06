@@ -66,6 +66,14 @@ func (p Policy) ReadyToTransition(task *Task, mr *MR) bool {
 // CanTransition — для готовой таски задана команда перевода.
 func (p Policy) CanTransition() bool { return p.NextCommand != "" }
 
+// TransitionLabel — команда перевода для кнопки: "State Ready for QA" → "Ready for QA".
+func TransitionLabel(command string) string {
+	if rest, ok := strings.CutPrefix(command, "State "); ok {
+		return rest
+	}
+	return command
+}
+
 // AwaitsMyReview — чужой MR ждёт твоего решения: ты его ещё не апрувнул и не
 // запросил изменения.
 func (p Policy) AwaitsMyReview(mr *MR) bool {

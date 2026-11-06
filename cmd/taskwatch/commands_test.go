@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"taskwatch/internal/alerts"
 	"taskwatch/internal/settings"
 	"taskwatch/internal/testutil/fakeapi"
 	"taskwatch/internal/testutil/fakesecrets"
@@ -60,7 +61,7 @@ func TestOnceTicks(t *testing.T) {
 	svc := serviceWith(t, "gitlab:\n  url: "+srv.URL+"\n  username: me\n",
 		fakesecrets.New(map[string]string{settings.AccountGitLab: "tok"}))
 	var sent int
-	notify := func(title, message, url, group string) error { sent++; return nil }
+	notify := func(alerts.Event) error { sent++; return nil }
 	cmd, _ := lookup("once")
 	if err := execute(cmd, setup{settings: svc, notify: notify}); err != nil {
 		t.Fatal(err)
