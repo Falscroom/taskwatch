@@ -12,7 +12,7 @@ import (
 
 // Окно, скрытое дольше releaseAfter, закрывается; проверка — раз в releaseCheck.
 var (
-	releaseAfter = time.Minute
+	releaseAfter = 5 * time.Minute
 	releaseCheck = 15 * time.Second
 )
 
@@ -25,7 +25,7 @@ type window interface {
 // popup — окно у иконки в меню-баре. WebView держит около 200 МБ во
 // вспомогательных процессах WebKit даже скрытым, поэтому окно, скрытое дольше
 // releaseAfter, закрывается целиком и создаётся заново при следующем клике по
-// иконке. Пока не прошла минута, повторное открытие мгновенное.
+// иконке. Пока не прошло releaseAfter, повторное открытие мгновенное.
 type popup struct {
 	open   func() (window, *atomic.Bool) // создать окно; флаг разрешает ему закрыться
 	attach func(window)                  // привязать окно к иконке
