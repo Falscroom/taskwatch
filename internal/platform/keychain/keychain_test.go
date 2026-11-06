@@ -1,7 +1,9 @@
 package keychain
 
 import (
+	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -33,5 +35,30 @@ func TestSaveLoadDelete(t *testing.T) {
 	}
 	if v, err := Load(account); err != nil || v != "" {
 		t.Fatalf("load after delete = %q, %v", v, err)
+	}
+}
+
+// Ошибки: текст от macOS вместо голого кода, отказы в доступе — ErrAccessDenied.
+// Связку ключей не трогает: текст ошибки по коду выдаёт сам Security.framework.
+func TestStatusError(t *testing.T) {
+	for _, code := range []int32{errSecUserCanceled, errSecAuthFailed, errSecInteractionNotAllowed, errAuthorizationInternal} {
+		if err := statusError("load", code); !errors.Is(err, ErrAccessDenied) {
+			t.Errorf("code %d: %v must be ErrAccessDenied", code, err)
+		}
+	}
+
+	err := statusError("add", errSecDuplicateItem)
+	if errors.Is(err, ErrAccessDenied) {
+		t.Errorf("duplicate is not a denial: %v", err)
+	}
+	msg := err.Error()
+	t.Logf("example: %s; denied: %v", msg, statusError("load", errSecAuthFailed))
+	if !strings.HasPrefix(msg, "keychain add: ") || !strings.HasSuffix(msg, "(osstatus -25299)") || len(msg) <= len("keychain add: (osstatus -25299)") {
+		t.Errorf("want macOS text and the code: %q", msg)
+	}
+
+	// Коду без текста хватает самого кода.
+	if got := statusError("load", 123456).Error(); got != "keychain load: osstatus 123456" && !strings.HasSuffix(got, "(osstatus 123456)") {
+		t.Errorf("unknown code: %q", got)
 	}
 }

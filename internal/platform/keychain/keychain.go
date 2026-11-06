@@ -10,6 +10,7 @@ package keychain
 #include <stdlib.h>
 
 // makeDict собирает CF-словарь из чередующихся ключей и значений (оба CFTypeRef).
+// Словарь сам удерживает значения: их можно освободить сразу после вызова.
 static CFMutableDictionaryRef makeDict(CFTypeRef *pairs, CFIndex n) {
 	CFMutableDictionaryRef d = CFDictionaryCreateMutable(
 		NULL, n, &kCFCopyStringDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
@@ -17,6 +18,23 @@ static CFMutableDictionaryRef makeDict(CFTypeRef *pairs, CFIndex n) {
 		CFDictionaryAddValue(d, pairs[i], pairs[i + 1]);
 	}
 	return d;
+}
+
+// errorMessage — текст ошибки Security.framework по коду; NULL — текста нет.
+// Освобождает вызывающий.
+static char *errorMessage(OSStatus st) {
+	CFStringRef s = SecCopyErrorMessageString(st, NULL);
+	if (s == NULL) {
+		return NULL;
+	}
+	CFIndex n = CFStringGetMaximumSizeForEncoding(CFStringGetLength(s), kCFStringEncodingUTF8) + 1;
+	char *buf = malloc(n);
+	if (!CFStringGetCString(s, buf, n, kCFStringEncodingUTF8)) {
+		free(buf);
+		buf = NULL;
+	}
+	CFRelease(s);
+	return buf;
 }
 */
 import "C"
@@ -30,18 +48,21 @@ import (
 // Service — имя сервиса в связке ключей.
 const Service = "com.taskwatch"
 
-// Коды ошибок Security.framework, которые обрабатываем вручную.
+// Коды Security.framework (SecBase.h, Authorization.h), которые разбираем сами.
 const (
-	errSecSuccess       = 0
-	errSecDuplicateItem = -25299 // запись уже есть — обновляем
-	errSecItemNotFound  = -25300 // записи нет — не ошибка
-	errSecAccessDenied  = -60008 // запись чужая: без промпта не прочитать
+	errSecSuccess               = 0
+	errSecUserCanceled          = -128   // в промпте доступа нажали «Запретить»
+	errSecAuthFailed            = -25293 // доступ не дали
+	errSecDuplicateItem         = -25299 // запись уже есть — пересоздаём
+	errSecItemNotFound          = -25300 // записи нет — не ошибка
+	errSecInteractionNotAllowed = -25308 // нужен промпт, а показать его нельзя
+	errAuthorizationInternal    = -60008 // так отвечает чужая запись без промпта
 )
 
-// ErrAccessDenied — запись создана другой сборкой бинаря: ACL Связки ключей
-// привязан к подписи создателя, чужую подпись пускает только через промпт.
-// Лечение — ввести токен заново в настройках: Save пересоздаст запись от
-// текущей сборки.
+// ErrAccessDenied — к записи не пустили. Обычно её создала другая сборка
+// бинаря: доступ к записи привязан к подписи создателя, а чужую подпись macOS
+// пускает только через промпт. Лечение — ввести токен заново в настройках:
+// Save пересоздаст запись от текущей сборки.
 var ErrAccessDenied = errors.New("запись создана другой сборкой приложения — введи токен заново в настройках")
 
 // Store — Связка ключей как хранилище секретов: Get/Set/Delete поверх Load/Save/Delete.
@@ -55,17 +76,9 @@ func (Store) Delete(account string) error        { return Delete(account) }
 // Запись принадлежит нашему бинарю: чужие приложения без разрешения прочитать
 // её не могут.
 func Save(account, secret string) error {
-	service := cfString(Service)
-	defer C.CFRelease(C.CFTypeRef(service))
-	acc := cfString(account)
-	defer C.CFRelease(C.CFTypeRef(acc))
 	data := cfData(secret)
 	defer C.CFRelease(C.CFTypeRef(data))
-
-	add := newDict(C.CFTypeRef(C.kSecClass), C.CFTypeRef(C.kSecClassGenericPassword),
-		C.CFTypeRef(C.kSecAttrService), C.CFTypeRef(service),
-		C.CFTypeRef(C.kSecAttrAccount), C.CFTypeRef(acc),
-		C.CFTypeRef(C.kSecValueData), C.CFTypeRef(data))
+	add := item(account, C.CFTypeRef(C.kSecValueData), C.CFTypeRef(data))
 	defer C.CFRelease(C.CFTypeRef(add))
 
 	if st := C.SecItemAdd(C.CFDictionaryRef(add), nil); st != errSecSuccess {
@@ -74,7 +87,7 @@ func Save(account, secret string) error {
 		}
 		// Запись уже есть. Пересоздаём её удалением и новым добавлением, а не
 		// SecItemUpdate: запись могла остаться от прошлой сборки, и тогда новый
-		// Add привязывает ACL к текущему бинарю — без лишних промптов дальше.
+		// Add привязывает доступ к текущему бинарю — без лишних промптов дальше.
 		if err := Delete(account); err != nil {
 			return err
 		}
@@ -87,14 +100,7 @@ func Save(account, secret string) error {
 
 // Load возвращает секрет; записи нет — пустая строка, это не ошибка.
 func Load(account string) (string, error) {
-	service := cfString(Service)
-	defer C.CFRelease(C.CFTypeRef(service))
-	acc := cfString(account)
-	defer C.CFRelease(C.CFTypeRef(acc))
-
-	q := newDict(C.CFTypeRef(C.kSecClass), C.CFTypeRef(C.kSecClassGenericPassword),
-		C.CFTypeRef(C.kSecAttrService), C.CFTypeRef(service),
-		C.CFTypeRef(C.kSecAttrAccount), C.CFTypeRef(acc),
+	q := item(account,
 		C.CFTypeRef(C.kSecReturnData), C.CFTypeRef(C.kCFBooleanTrue),
 		C.CFTypeRef(C.kSecMatchLimit), C.CFTypeRef(C.kSecMatchLimitOne))
 	defer C.CFRelease(C.CFTypeRef(q))
@@ -117,20 +123,27 @@ func Load(account string) (string, error) {
 
 // Delete удаляет запись; отсутствие записи ошибкой не считается.
 func Delete(account string) error {
-	service := cfString(Service)
-	defer C.CFRelease(C.CFTypeRef(service))
-	acc := cfString(account)
-	defer C.CFRelease(C.CFTypeRef(acc))
-
-	q := newDict(C.CFTypeRef(C.kSecClass), C.CFTypeRef(C.kSecClassGenericPassword),
-		C.CFTypeRef(C.kSecAttrService), C.CFTypeRef(service),
-		C.CFTypeRef(C.kSecAttrAccount), C.CFTypeRef(acc))
+	q := item(account)
 	defer C.CFRelease(C.CFTypeRef(q))
 
 	if st := C.SecItemDelete(C.CFDictionaryRef(q)); st != errSecSuccess && st != errSecItemNotFound {
 		return osStatus("delete", st)
 	}
 	return nil
+}
+
+// item — запрос к нашей записи account (пароль сервиса Service) с
+// дополнительными парами ключ-значение; освобождать через CFRelease.
+func item(account string, extra ...C.CFTypeRef) C.CFMutableDictionaryRef {
+	service := cfString(Service)
+	defer C.CFRelease(C.CFTypeRef(service))
+	acc := cfString(account)
+	defer C.CFRelease(C.CFTypeRef(acc))
+	return newDict(append([]C.CFTypeRef{
+		C.CFTypeRef(C.kSecClass), C.CFTypeRef(C.kSecClassGenericPassword),
+		C.CFTypeRef(C.kSecAttrService), C.CFTypeRef(service),
+		C.CFTypeRef(C.kSecAttrAccount), C.CFTypeRef(acc),
+	}, extra...)...)
 }
 
 // newDict — CFMutableDictionaryRef из чередующихся ключей и значений;
@@ -156,9 +169,27 @@ func cfData(s string) C.CFDataRef {
 	return C.CFDataCreate(0, p, C.CFIndex(len(b)))
 }
 
-func osStatus(op string, st C.OSStatus) error {
-	if st == errSecAccessDenied {
-		return fmt.Errorf("keychain %s: %w (osstatus %d)", op, ErrAccessDenied, int32(st))
+func osStatus(op string, st C.OSStatus) error { return statusError(op, int32(st)) }
+
+// statusError — ошибка с текстом от macOS и кодом. Отказ в доступе к записи — ErrAccessDenied.
+func statusError(op string, code int32) error {
+	msg := fmt.Sprintf("osstatus %d", code)
+	if text := errorMessage(C.OSStatus(code)); text != "" {
+		msg = fmt.Sprintf("%s (osstatus %d)", text, code)
 	}
-	return fmt.Errorf("keychain %s: osstatus %d", op, int32(st))
+	switch code {
+	case errSecUserCanceled, errSecAuthFailed, errSecInteractionNotAllowed, errAuthorizationInternal:
+		return fmt.Errorf("keychain %s: %w: %s", op, ErrAccessDenied, msg)
+	}
+	return fmt.Errorf("keychain %s: %s", op, msg)
+}
+
+// errorMessage — текст ошибки Security.framework, пусто — если у кода текста нет.
+func errorMessage(st C.OSStatus) string {
+	c := C.errorMessage(st)
+	if c == nil {
+		return ""
+	}
+	defer C.free(unsafe.Pointer(c))
+	return C.GoString(c)
 }
