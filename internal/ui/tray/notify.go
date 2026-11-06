@@ -103,15 +103,29 @@ func (n *Notifier) start(ctx context.Context, opts application.ServiceOptions) {
 	}
 	n.native.Store(true)
 	go func() {
-		ok, err := n.svc.RequestNotificationAuthorization()
-		if err != nil {
-			log.Printf("уведомления: разрешение: %v", err)
-		}
+		ok, err := authorize(n.svc.RequestNotificationAuthorization, n.svc.CheckNotificationAuthorization)
 		n.allowed.Store(ok)
 		if !ok {
+			if err != nil {
+				log.Printf("уведомления: разрешение: %v", err)
+			}
 			log.Printf("уведомления выключены — включить: Системные настройки → Уведомления → taskwatch")
 		}
 	}()
+}
+
+// authorize — разрешены ли уведомления. На запрос разрешения macOS бывает
+// отвечает ошибкой, хотя в настройках уведомления включены, — тогда верим
+// проверке настроек, а ошибку запроса отдаём, только если и она говорит «нет».
+func authorize(request, check func() (bool, error)) (bool, error) {
+	ok, err := request()
+	if ok {
+		return true, nil
+	}
+	if granted, cerr := check(); cerr == nil && granted {
+		return true, nil
+	}
+	return false, err
 }
 
 // service — Notifier в виде сервиса Wails: только запуск, без методов для JS.

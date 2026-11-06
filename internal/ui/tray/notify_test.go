@@ -81,3 +81,28 @@ func TestNotifierFallsBackOutsideBundle(t *testing.T) {
 		t.Error("fallback error must reach the dispatcher, so the event is retried")
 	}
 }
+
+func TestAuthorize(t *testing.T) {
+	notAllowed := errors.New("Notifications are not allowed for this application")
+	answer := func(ok bool, err error) func() (bool, error) { return func() (bool, error) { return ok, err } }
+	cases := []struct {
+		name           string
+		request, check func() (bool, error)
+		want           bool
+		wantErr        error
+	}{
+		{"granted", answer(true, nil), answer(false, errors.New("not called")), true, nil},
+		{"request fails, settings allow", answer(false, notAllowed), answer(true, nil), true, nil},
+		{"turned off", answer(false, notAllowed), answer(false, nil), false, notAllowed},
+		{"user declined", answer(false, nil), answer(false, nil), false, nil},
+		{"check fails too", answer(false, notAllowed), answer(true, errors.New("timeout")), false, notAllowed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, err := authorize(tc.request, tc.check)
+			if ok != tc.want || !errors.Is(err, tc.wantErr) {
+				t.Errorf("authorize = %v, %v; want %v, %v", ok, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
