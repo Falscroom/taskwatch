@@ -2,6 +2,9 @@ package tray
 
 import (
 	"errors"
+	"log"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
@@ -82,27 +85,23 @@ func TestNotifierFallsBackOutsideBundle(t *testing.T) {
 	}
 }
 
-func TestAuthorize(t *testing.T) {
-	notAllowed := errors.New("Notifications are not allowed for this application")
-	answer := func(ok bool, err error) func() (bool, error) { return func() (bool, error) { return ok, err } }
-	cases := []struct {
-		name           string
-		request, check func() (bool, error)
-		want           bool
-		wantErr        error
-	}{
-		{"granted", answer(true, nil), answer(false, errors.New("not called")), true, nil},
-		{"request fails, settings allow", answer(false, notAllowed), answer(true, nil), true, nil},
-		{"turned off", answer(false, notAllowed), answer(false, nil), false, notAllowed},
-		{"user declined", answer(false, nil), answer(false, nil), false, nil},
-		{"check fails too", answer(false, notAllowed), answer(true, errors.New("timeout")), false, notAllowed},
+// Про выключенные уведомления — одна строка в логе, когда уведомление и правда
+// не показано; разрешили позже — снова показываем.
+func TestPermitted(t *testing.T) {
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	allowed := false
+	n := &Notifier{check: func() (bool, error) { return allowed, nil }}
+	if n.permitted() || n.permitted() {
+		t.Fatal("notifications are off")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ok, err := authorize(tc.request, tc.check)
-			if ok != tc.want || !errors.Is(err, tc.wantErr) {
-				t.Errorf("authorize = %v, %v; want %v, %v", ok, err, tc.want, tc.wantErr)
-			}
-		})
+	if c := strings.Count(buf.String(), "уведомления taskwatch выключены"); c != 1 {
+		t.Errorf("warnings = %d, want one:\n%s", c, buf.String())
+	}
+	allowed = true
+	if !n.permitted() {
+		t.Error("allowed later in System Settings — must show again")
 	}
 }

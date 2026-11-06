@@ -32,13 +32,17 @@ type Notifier struct {
 	svc      *notifications.NotificationService
 	native   atomic.Bool // Центр уведомлений запущен — мы внутри бандла
 	allowed  atomic.Bool // пользователь разрешил уведомления
+	warned   atomic.Bool // про выключенные уведомления уже написали в лог
+	// check — разрешены ли уведомления в настройках macOS.
+	check func() (bool, error)
 
 	mu         sync.Mutex
 	categories map[string]bool // уже зарегистрированные наборы кнопок
 }
 
 func NewNotifier(fallback alerts.Notifier) *Notifier {
-	return &Notifier{fallback: fallback, svc: notifications.New(), categories: map[string]bool{}}
+	svc := notifications.New()
+	return &Notifier{fallback: fallback, svc: svc, check: svc.CheckNotificationAuthorization, categories: map[string]bool{}}
 }
 
 // Notify — alerts.Notifier.
@@ -62,16 +66,21 @@ func (n *Notifier) Notify(ev alerts.Event) error {
 }
 
 // permitted — разрешены ли уведомления. Разрешение могут выдать позже в
-// настройках macOS, поэтому отказ перепроверяем при каждом событии.
+// настройках macOS, поэтому отказ перепроверяем при каждом событии. Про
+// выключенные уведомления пишем в лог здесь, когда уведомление и правда не
+// показано, — один раз.
 func (n *Notifier) permitted() bool {
 	if n.allowed.Load() {
 		return true
 	}
-	ok, err := n.svc.CheckNotificationAuthorization()
+	ok, err := n.check()
 	if err != nil {
 		log.Printf("уведомления: %v", err)
 	}
 	n.allowed.Store(ok)
+	if !ok && !n.warned.Swap(true) {
+		log.Printf("уведомление не показано: уведомления taskwatch выключены — включить: Системные настройки → Уведомления → taskwatch")
+	}
 	return ok
 }
 
@@ -102,30 +111,14 @@ func (n *Notifier) start(ctx context.Context, opts application.ServiceOptions) {
 		return
 	}
 	n.native.Store(true)
+	// Ответу на запрос при запуске верить нельзя: у новой сборки другая подпись,
+	// и macOS переносит на неё разрешение уже после запроса, а до того отвечает
+	// «не разрешено». Поэтому здесь только спрашиваем, а итог проверяет
+	// permitted перед каждым уведомлением.
 	go func() {
-		ok, err := authorize(n.svc.RequestNotificationAuthorization, n.svc.CheckNotificationAuthorization)
+		ok, _ := n.svc.RequestNotificationAuthorization()
 		n.allowed.Store(ok)
-		if !ok {
-			if err != nil {
-				log.Printf("уведомления: разрешение: %v", err)
-			}
-			log.Printf("уведомления выключены — включить: Системные настройки → Уведомления → taskwatch")
-		}
 	}()
-}
-
-// authorize — разрешены ли уведомления. На запрос разрешения macOS бывает
-// отвечает ошибкой, хотя в настройках уведомления включены, — тогда верим
-// проверке настроек, а ошибку запроса отдаём, только если и она говорит «нет».
-func authorize(request, check func() (bool, error)) (bool, error) {
-	ok, err := request()
-	if ok {
-		return true, nil
-	}
-	if granted, cerr := check(); cerr == nil && granted {
-		return true, nil
-	}
-	return false, err
 }
 
 // service — Notifier в виде сервиса Wails: только запуск, без методов для JS.
