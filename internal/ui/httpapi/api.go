@@ -86,6 +86,9 @@ func (a *api) view(w http.ResponseWriter, r *http.Request) {
 	snap, updated, err := a.eng.Snapshot()
 	v := view.Build(snap, updated, err, a.eng.Config().Policy(), a.eng.Mutes())
 	v.Version = version
+	if t := a.eng.SleepUntil(time.Now()); !t.IsZero() {
+		v.SleepUntil = t.Format(time.RFC3339)
+	}
 	writeJSON(w, http.StatusOK, v)
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -53,12 +54,24 @@ type Rules struct {
 	MRBehindCommits int `yaml:"mr_behind_commits"`
 }
 
+// WorkHours — рабочее время: вне его taskwatch не опрашивает сервисы и молчит.
+type WorkHours struct {
+	Enabled bool     `yaml:"enabled"`
+	Days    []string `yaml:"days"`  // mon, tue, wed, thu, fri, sat, sun
+	Start   string   `yaml:"start"` // "10:00"
+	End     string   `yaml:"end"`   // "19:00"
+}
+
+// WeekDays — названия дней в work_hours.days, по порядку недели.
+var WeekDays = []string{"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+
 type Config struct {
 	PollInterval time.Duration `yaml:"poll_interval"`
 	StatePath    string        `yaml:"state_path,omitempty"`
 	GitLab       GitLab        `yaml:"gitlab"`
 	YouTrack     YouTrack      `yaml:"youtrack"`
 	Rules        Rules         `yaml:"rules"`
+	WorkHours    WorkHours     `yaml:"work_hours"`
 }
 
 func DefaultPath() string {
@@ -76,7 +89,52 @@ func Default(path string) *Config {
 			ReleaseBranchPrefix: "release/",
 			MRLookback:          14 * 24 * time.Hour,
 		},
+		WorkHours: WorkHours{Days: []string{"mon", "tue", "wed", "thu", "fri"}, Start: "10:00", End: "19:00"},
 	}
+}
+
+// Schedule — рабочее время в виде домена; false — оно выключено или задано
+// неверно (такое не пропускает Validate), и taskwatch работает круглосуточно.
+func (c *Config) Schedule() (domain.WorkHours, bool) {
+	w, err := c.WorkHours.parse()
+	if !c.WorkHours.Enabled || err != nil {
+		return domain.WorkHours{}, false
+	}
+	return w, true
+}
+
+func (h WorkHours) parse() (domain.WorkHours, error) {
+	var w domain.WorkHours
+	var err error
+	if w.Start, err = clock(h.Start); err != nil {
+		return w, fmt.Errorf("work_hours.start: %w", err)
+	}
+	if w.End, err = clock(h.End); err != nil {
+		return w, fmt.Errorf("work_hours.end: %w", err)
+	}
+	if w.Start >= w.End {
+		return w, errors.New("work_hours: start must be before end")
+	}
+	for _, d := range h.Days {
+		i := slices.Index(WeekDays, d)
+		if i < 0 {
+			return w, fmt.Errorf("work_hours.days: unknown day %q", d)
+		}
+		w.Days[time.Weekday((i+1)%7)] = true // mon → time.Monday, sun → time.Sunday
+	}
+	if len(h.Days) == 0 {
+		return w, errors.New("work_hours.days: at least one day is required")
+	}
+	return w, nil
+}
+
+// clock — «ЧЧ:ММ» в минуты от полуночи.
+func clock(s string) (int, error) {
+	t, err := time.Parse("15:04", s)
+	if err != nil {
+		return 0, fmt.Errorf("%q is not HH:MM", s)
+	}
+	return t.Hour()*60 + t.Minute(), nil
 }
 
 func defaultStatePath(configPath string) string {
@@ -164,6 +222,11 @@ func (c *Config) Validate() error {
 	})
 	if c.PollInterval <= 0 {
 		errs = append(errs, errors.New("poll_interval must be positive"))
+	}
+	if c.WorkHours.Enabled {
+		if _, err := c.WorkHours.parse(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }

@@ -33,6 +33,8 @@ test("payload reads the form back into the request body", () => {
     "gl-url": " https://gl ", "gl-username": "me", "gl-token": " glpat ", "yt-url": "", "yt-login": "",
     "yt-query": "", "yt-token": "", "r-approvals": "x", "r-review-state": "Code Review", "r-next-command": "",
     "r-auto": true, "r-release": "release/", "r-lookback": "48h", "r-behind": "7", "r-poll": "5m", "r-nodraft": false,
+    "wh-enabled": true, "wh-mon": true, "wh-tue": false, "wh-wed": false, "wh-thu": false, "wh-fri": true,
+    "wh-sat": false, "wh-sun": false, "wh-start": "09:30", "wh-end": " 18:00 ",
   };
   const body = payload((id) => (typeof values[id] === "boolean" ? { checked: values[id] } : { value: values[id] }));
   assert.deepEqual(body, {
@@ -42,6 +44,10 @@ test("payload reads the form back into the request body", () => {
     rules: {
       requiredApprovals: 0, reviewState: "Code Review", nextCommand: "", autoTransition: true,
       releaseBranchPrefix: "release/", mrLookback: "48h", mrBehindCommits: 7, excludeDraft: false,
+    },
+    workHours: {
+      enabled: true, start: "09:30", end: "18:00",
+      days: { mon: true, tue: false, wed: false, thu: false, fri: true, sat: false, sun: false },
     },
   });
 });

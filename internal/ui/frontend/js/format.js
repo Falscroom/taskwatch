@@ -25,6 +25,22 @@ export function ago(iso, now = Date.now()) {
   return `${Math.floor(s / 3600)} ч назад`;
 }
 
+const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+
+/**
+ * wakeLabel — когда опрос проснётся: «в 10:00» сегодня, «завтра в 10:00», «в пн 10:00».
+ * @param {string} iso
+ * @param {number} [now]
+ */
+export function wakeLabel(iso, now = Date.now()) {
+  const t = new Date(iso);
+  const hm = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+  const day = (/** @type {number} */ ms) => new Date(ms).toDateString();
+  if (day(t.getTime()) === day(now)) return `в ${hm}`;
+  if (day(t.getTime()) === day(now + 864e5)) return `завтра в ${hm}`;
+  return `в ${WEEKDAYS[t.getDay()]} ${hm}`;
+}
+
 const MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
 /**

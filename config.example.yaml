@@ -27,3 +27,10 @@ rules:
   # свой MR, отставший от target минимум на столько коммитов, подсвечивается;
   # 0 — не подсвечивать
   mr_behind_commits: 10
+
+# рабочее время: вне его taskwatch не опрашивает сервисы и не присылает уведомлений
+work_hours:
+  enabled: false
+  days: [mon, tue, wed, thu, fri]
+  start: "10:00"
+  end: "19:00"

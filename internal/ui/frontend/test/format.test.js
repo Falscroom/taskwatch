@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ago, esc, fmtDur, loaded, muteLabel } from "../js/format.js";
+import { ago, esc, fmtDur, loaded, muteLabel, wakeLabel } from "../js/format.js";
 
 test("esc", () => {
   assert.equal(esc(`<a href="x">'&'</a>`), "&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;");
@@ -39,4 +39,11 @@ test("fmtDur", () => {
   assert.equal(fmtDur("0s"), "0s");
   assert.equal(fmtDur(""), "0s");
   assert.equal(fmtDur("1.5h"), "1.5h"); // не наш формат — как есть
+});
+
+test("wakeLabel", () => {
+  const now = new Date(2026, 10, 6, 20, 0).getTime(); // пятница, вечер
+  assert.equal(wakeLabel(new Date(2026, 10, 6, 21, 30).toISOString(), now), "в 21:30");
+  assert.equal(wakeLabel(new Date(2026, 10, 7, 10, 0).toISOString(), now), "завтра в 10:00");
+  assert.equal(wakeLabel(new Date(2026, 10, 9, 10, 0).toISOString(), now), "в пн 10:00");
 });

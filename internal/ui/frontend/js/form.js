@@ -9,7 +9,8 @@ import { esc, fmtDur } from "./format.js";
  *   configPath: string, configured: boolean, pollInterval: string,
  *   gitlab: Service & {username: string}, youtrack: Service & {login: string, query: string},
  *   rules: {requiredApprovals: number, reviewState: string, nextCommand: string, autoTransition: boolean,
- *     releaseBranchPrefix: string, mrLookback: string, excludeDraft: boolean, mrBehindCommits: number}
+ *     releaseBranchPrefix: string, mrLookback: string, excludeDraft: boolean, mrBehindCommits: number},
+ *   workHours?: {enabled: boolean, days: Record<string, boolean>, start: string, end: string}
  * }} ConfigForm
  * @typedef {"text" | "number" | "check" | "duration" | "token"} Kind
  * @typedef {{id: string, path: string, kind?: Kind, fallback?: number, hint?: string}} Field
@@ -34,6 +35,10 @@ export const FIELDS = [
   { id: "r-behind", path: "rules.mrBehindCommits", kind: "number", fallback: 0 },
   { id: "r-poll", path: "pollInterval", kind: "duration" },
   { id: "r-nodraft", path: "rules.excludeDraft", kind: "check" },
+  { id: "wh-enabled", path: "workHours.enabled", kind: "check" },
+  ...["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((d) => /** @type {Field} */ ({ id: `wh-${d}`, path: `workHours.days.${d}`, kind: "check" })),
+  { id: "wh-start", path: "workHours.start" },
+  { id: "wh-end", path: "workHours.end" },
 ];
 
 const TOKEN_SAVED = "сохранён в связке ключей · пусто = не менять";

@@ -633,3 +633,40 @@ func TestPollProblem(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanWorkHours(t *testing.T) {
+	cfg := config.Default("/x/config.yaml")
+	cfg.PollInterval = 30 * time.Minute
+	at := func(day, hour, minute int) time.Time { return time.Date(2026, 11, day, hour, minute, 0, 0, time.Local) }
+
+	// Рабочее время выключено — опрос круглосуточно.
+	if tick, wait := plan(at(7, 3, 0), cfg, false); !tick || wait != 30*time.Minute {
+		t.Errorf("off: tick = %v, wait = %s", tick, wait)
+	}
+
+	cfg.WorkHours.Enabled = true // пн–пт, 10:00–19:00; 6 ноября 2026 — пятница
+	cases := []struct {
+		name   string
+		now    time.Time
+		forced bool
+		tick   bool
+		wait   time.Duration
+	}{
+		{"working hours", at(6, 12, 0), false, true, 30 * time.Minute},
+		{"evening sleeps", at(6, 20, 0), false, false, offHoursCheck},
+		{"«Обновить» works off hours", at(6, 20, 0), true, true, offHoursCheck},
+		{"weekend sleeps", at(7, 12, 0), false, false, offHoursCheck},
+		{"wakes right at the start", at(9, 9, 59), false, false, time.Minute},
+		{"just before the start", at(9, 9, 59).Add(30 * time.Second), false, false, 30 * time.Second},
+	}
+	for _, tc := range cases {
+		tick, wait := plan(tc.now, cfg, tc.forced)
+		if tick != tc.tick || wait != tc.wait {
+			t.Errorf("%s: tick = %v, wait = %s; want %v, %s", tc.name, tick, wait, tc.tick, tc.wait)
+		}
+	}
+	// В начале рабочего дня — сразу опрос.
+	if tick, _ := plan(at(9, 10, 0), cfg, false); !tick {
+		t.Error("the working day starts with a poll")
+	}
+}

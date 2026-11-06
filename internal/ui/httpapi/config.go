@@ -184,6 +184,33 @@ type configForm struct {
 	GitLab       gitlabForm   `json:"gitlab"`
 	YouTrack     youtrackForm `json:"youtrack"`
 	Rules        rulesForm    `json:"rules"`
+	// WorkHours — nil, если форма его не прислала: тогда остаётся текущее.
+	WorkHours *workHoursForm `json:"workHours,omitempty"`
+}
+
+type workHoursForm struct {
+	Enabled bool            `json:"enabled"`
+	Days    map[string]bool `json:"days"` // mon … sun
+	Start   string          `json:"start"`
+	End     string          `json:"end"`
+}
+
+func workHoursFormOf(h config.WorkHours) *workHoursForm {
+	f := &workHoursForm{Enabled: h.Enabled, Days: map[string]bool{}, Start: h.Start, End: h.End}
+	for _, d := range h.Days {
+		f.Days[d] = true
+	}
+	return f
+}
+
+func (f *workHoursForm) config() config.WorkHours {
+	h := config.WorkHours{Enabled: f.Enabled, Start: strings.TrimSpace(f.Start), End: strings.TrimSpace(f.End)}
+	for _, d := range config.WeekDays {
+		if f.Days[d] {
+			h.Days = append(h.Days, d)
+		}
+	}
+	return h
 }
 
 type serviceForm struct {
@@ -243,6 +270,7 @@ func formOf(cfg *config.Config, path string) configForm {
 			ExcludeDraft:        cfg.Rules.ExcludeDraft,
 			MRBehindCommits:     cfg.Rules.MRBehindCommits,
 		},
+		WorkHours: workHoursFormOf(cfg.WorkHours),
 	}
 }
 
@@ -284,6 +312,10 @@ func (f configForm) config(cur *config.Config, path string) (*config.Config, err
 			return nil, fmt.Errorf("mr_lookback: %w", err)
 		}
 		cfg.Rules.MRLookback = d
+	}
+	cfg.WorkHours = cur.WorkHours
+	if f.WorkHours != nil {
+		cfg.WorkHours = f.WorkHours.config()
 	}
 	return cfg, nil
 }

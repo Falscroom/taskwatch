@@ -240,3 +240,38 @@ func yamlKeys(t *testing.T, data []byte) []string {
 	slices.Sort(keys)
 	return keys
 }
+
+func TestWorkHours(t *testing.T) {
+	c := Default("/x/config.yaml")
+	if _, on := c.Schedule(); on {
+		t.Fatal("work hours are off by default")
+	}
+	c.WorkHours.Enabled = true
+	w, on := c.Schedule()
+	if !on || w.Start != 600 || w.End != 1140 || !w.Days[time.Monday] || !w.Days[time.Friday] || w.Days[time.Saturday] || w.Days[time.Sunday] {
+		t.Errorf("schedule = %+v, %v", w, on)
+	}
+	c.WorkHours.Days = []string{"sun"}
+	if w, _ := c.Schedule(); !w.Days[time.Sunday] || w.Days[time.Monday] {
+		t.Errorf("sun = %+v", w.Days)
+	}
+
+	for name, bad := range map[string]WorkHours{
+		"start after end": {Enabled: true, Days: []string{"mon"}, Start: "19:00", End: "10:00"},
+		"not a time":      {Enabled: true, Days: []string{"mon"}, Start: "10", End: "19:00"},
+		"unknown day":     {Enabled: true, Days: []string{"monday"}, Start: "10:00", End: "19:00"},
+		"no days":         {Enabled: true, Start: "10:00", End: "19:00"},
+	} {
+		c.WorkHours = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "work_hours") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+		if _, on := c.Schedule(); on {
+			t.Errorf("%s: an invalid schedule must not switch polling off", name)
+		}
+	}
+	c.WorkHours.Enabled = false
+	if err := c.Validate(); err != nil {
+		t.Errorf("disabled work hours are not validated: %v", err)
+	}
+}

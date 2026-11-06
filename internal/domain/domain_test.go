@@ -245,3 +245,35 @@ func TestMuteRules(t *testing.T) {
 		t.Error("MuteActive")
 	}
 }
+
+func TestWorkHours(t *testing.T) {
+	w := WorkHours{Start: 10 * 60, End: 19 * 60}
+	for _, d := range []time.Weekday{time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday} {
+		w.Days[d] = true
+	}
+	at := func(day, hour, minute int) time.Time { return time.Date(2026, 11, day, hour, minute, 0, 0, time.Local) }
+	// 6 ноября 2026 — пятница, 7–8 — выходные, 9 — понедельник.
+	cases := []struct {
+		t      time.Time
+		active bool
+		next   time.Time
+	}{
+		{at(6, 9, 59), false, at(6, 10, 0)},
+		{at(6, 10, 0), true, at(9, 10, 0)},
+		{at(6, 18, 59), true, at(9, 10, 0)},
+		{at(6, 19, 0), false, at(9, 10, 0)},
+		{at(7, 12, 0), false, at(9, 10, 0)},
+		{at(9, 8, 0), false, at(9, 10, 0)},
+	}
+	for _, tc := range cases {
+		if got := w.Active(tc.t); got != tc.active {
+			t.Errorf("Active(%s) = %v", tc.t.Format("Mon 15:04"), got)
+		}
+		if got := w.NextStart(tc.t); !got.Equal(tc.next) {
+			t.Errorf("NextStart(%s) = %s, want %s", tc.t.Format("Mon 15:04"), got.Format("Mon 02 15:04"), tc.next.Format("Mon 02 15:04"))
+		}
+	}
+	if !(WorkHours{Start: 600, End: 1140}).NextStart(at(6, 12, 0)).IsZero() {
+		t.Error("no working days — no next start")
+	}
+}

@@ -138,23 +138,27 @@ func (e *Engine) publish() {
 }
 
 func (e *Engine) Run(ctx context.Context) {
-	first := true
+	first, forced := true, false
 	for {
-		started := time.Now()
-		if err := e.Tick(ctx); err != nil {
-			log.Printf("tick: %v", err)
-		}
-		if first {
-			// Разовый ориентир, сколько занимает полный сбор — помогает
-			// отличать «данные собираются» от «сбор не запускался».
-			first = false
-			if snap, _, _ := e.Snapshot(); snap != nil {
-				log.Printf("первый опрос завершён за %s: тасок %d, MR %d",
-					time.Since(started).Round(time.Second), len(snap.Tasks), len(snap.AllMRs()))
+		// Настройки перечитываем каждый цикл: новые вступают в силу сразу.
+		tick, wait := plan(time.Now(), e.Config(), forced)
+		forced = false
+		if tick {
+			started := time.Now()
+			if err := e.Tick(ctx); err != nil {
+				log.Printf("tick: %v", err)
+			}
+			if first {
+				// Разовый ориентир, сколько занимает полный сбор — помогает
+				// отличать «данные собираются» от «сбор не запускался».
+				first = false
+				if snap, _, _ := e.Snapshot(); snap != nil {
+					log.Printf("первый опрос завершён за %s: тасок %d, MR %d",
+						time.Since(started).Round(time.Second), len(snap.Tasks), len(snap.AllMRs()))
+				}
 			}
 		}
-		// Интервал перечитываем каждый цикл: новые настройки вступают в силу сразу.
-		timer := time.NewTimer(pollInterval(e.Config()))
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -162,8 +166,39 @@ func (e *Engine) Run(ctx context.Context) {
 		case <-timer.C:
 		case <-e.refresh:
 			timer.Stop()
+			forced = true
 		}
 	}
+}
+
+// offHoursCheck — как часто вне рабочего времени сверяться с часами. Таймер на
+// всю ночь не годится: пока Mac спит, таймеры Go стоят, и утром он сработал бы
+// с опозданием на всё время сна.
+var offHoursCheck = time.Minute
+
+// plan — шаг цикла опроса: опрашивать ли сейчас и сколько ждать следующего шага.
+// Вне рабочего времени опрос спит, но «Обновить» (forced) работает всегда; с
+// началом рабочего дня опрос проходит сразу, не дожидаясь интервала.
+func plan(now time.Time, cfg *config.Config, forced bool) (tick bool, wait time.Duration) {
+	hours, on := cfg.Schedule()
+	if !on || hours.Active(now) {
+		return true, pollInterval(cfg)
+	}
+	wait = offHoursCheck
+	if next := hours.NextStart(now); !next.IsZero() && next.Sub(now) < wait {
+		wait = next.Sub(now)
+	}
+	return forced, wait
+}
+
+// SleepUntil — вне рабочего времени: когда опрос проснётся; нулевое время —
+// опрос работает (или рабочее время выключено).
+func (e *Engine) SleepUntil(now time.Time) time.Time {
+	hours, on := e.Config().Schedule()
+	if !on || hours.Active(now) {
+		return time.Time{}
+	}
+	return hours.NextStart(now)
 }
 
 // pollInterval — пауза между тиками. Неположительный интервал из битого yaml

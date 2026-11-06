@@ -27,6 +27,7 @@
       </nav>
     </header>
     <div class="error" id="error" hidden></div>
+    <div class="offhours" id="offhours" hidden></div>
     <section class="list" id="list"></section>
     <div class="toast" id="toast" hidden></div>
 
@@ -115,6 +116,27 @@
         </fieldset>
         <fieldset>
           <legend>Приложение</legend>
+          <label class="check">
+            <input name="wh-enabled" id="wh-enabled" type="checkbox"> Работать только в рабочее время
+          </label>
+          <div class="workdays">
+            <label class="day"><input id="wh-mon" type="checkbox">Пн</label>
+            <label class="day"><input id="wh-tue" type="checkbox">Вт</label>
+            <label class="day"><input id="wh-wed" type="checkbox">Ср</label>
+            <label class="day"><input id="wh-thu" type="checkbox">Чт</label>
+            <label class="day"><input id="wh-fri" type="checkbox">Пт</label>
+            <label class="day"><input id="wh-sat" type="checkbox">Сб</label>
+            <label class="day"><input id="wh-sun" type="checkbox">Вс</label>
+          </div>
+          <div class="row">
+            <label>С
+              <input name="wh-start" id="wh-start" type="time" value="10:00">
+            </label>
+            <label>До
+              <input name="wh-end" id="wh-end" type="time" value="19:00">
+            </label>
+          </div>
+          <div class="settings-hint left">Вне рабочего времени taskwatch не ходит в GitLab и YouTrack и молчит; «Обновить» работает всегда.</div>
           <label class="check" id="login-item-row" hidden>
             <input id="login-item" type="checkbox" data-action="login-item"> Запускать при входе в систему
           </label>

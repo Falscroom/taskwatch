@@ -105,6 +105,8 @@ type View struct {
 	Error     string    `json:"error,omitempty"`
 	NeedsYou  int       `json:"needsYou"`
 	Cards     []Card    `json:"cards"`
+	// SleepUntil — вне рабочего времени: когда опрос проснётся (RFC 3339).
+	SleepUntil string `json:"sleepUntil,omitempty"`
 }
 
 func Build(snap *domain.Snapshot, updated time.Time, err error, p domain.Policy, mutes domain.MuteRules) View {

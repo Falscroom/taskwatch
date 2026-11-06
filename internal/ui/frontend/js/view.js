@@ -3,7 +3,7 @@
 import { api } from "./api.js";
 import { renderList } from "./cards.js";
 import { $, sleep, toast } from "./dom.js";
-import { ago } from "./format.js";
+import { ago, wakeLabel } from "./format.js";
 import { state } from "./store.js";
 
 export function render() {
@@ -16,6 +16,8 @@ export function render() {
   $("needs-count").textContent = String(v.needsYou);
   $("error").hidden = !v.error;
   $("error").textContent = v.error || "";
+  $("offhours").hidden = !v.sleepUntil;
+  $("offhours").textContent = v.sleepUntil ? `Вне рабочего времени · опрос ${wakeLabel(v.sleepUntil)} · «Обновить» — опросить сейчас` : "";
   $("list").innerHTML = renderList(v, state.tab, state.open);
 }
 

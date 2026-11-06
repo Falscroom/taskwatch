@@ -27,6 +27,7 @@ import (
 	"taskwatch/internal/state"
 	"taskwatch/internal/testutil/fakeapi"
 	"taskwatch/internal/testutil/fakesecrets"
+	"taskwatch/internal/view"
 )
 
 func TestMain(m *testing.M) {
@@ -671,5 +672,45 @@ func TestClearSecrets(t *testing.T) {
 	}
 	if cfg := h.eng.Config(); cfg.GitLab.Token != "" || cfg.YouTrack.Token != "" || cfg.Configured() {
 		t.Errorf("engine still has tokens: %+v", cfg)
+	}
+}
+
+// Рабочее время: форма отдаёт и принимает его, без него в запросе — остаётся
+// текущее; вне рабочего времени вид говорит, когда опрос проснётся.
+func TestWorkHoursForm(t *testing.T) {
+	srv := fakeapi.New(t)
+	h := newAPI(t, configured(srv.URL))
+
+	var form configForm
+	_ = json.Unmarshal(h.do(t, http.MethodGet, "/api/config", nil).Body.Bytes(), &form)
+	if w := form.WorkHours; w == nil || w.Enabled || !w.Days["mon"] || w.Days["sat"] || w.Start != "10:00" || w.End != "19:00" {
+		t.Fatalf("form work hours = %+v", form.WorkHours)
+	}
+
+	// Только завтрашний день — значит, сейчас точно не рабочее время.
+	// WeekDays начинается с пн, а time.Weekday — с вс: тот же индекс — это завтра.
+	other := config.WeekDays[time.Now().Weekday()]
+	body := formFor(srv.URL)
+	body["workHours"] = map[string]any{"enabled": true, "days": map[string]bool{other: true}, "start": "09:30", "end": "18:00"}
+	if rec := h.do(t, http.MethodPost, "/api/config", body); rec.Code != 204 {
+		t.Fatalf("save: %d (%s)", rec.Code, rec.Body)
+	}
+	if w := h.eng.Config().WorkHours; !w.Enabled || len(w.Days) != 1 || w.Days[0] != other || w.Start != "09:30" {
+		t.Errorf("saved work hours = %+v", w)
+	}
+	var v view.View
+	_ = json.Unmarshal(h.do(t, http.MethodGet, "/api/view", nil).Body.Bytes(), &v)
+	if v.SleepUntil == "" {
+		t.Error("off hours: the view must say when polling wakes up")
+	}
+
+	// Форма без рабочего времени его не сбрасывает.
+	if rec := h.do(t, http.MethodPost, "/api/config", formFor(srv.URL)); rec.Code != 204 || !h.eng.Config().WorkHours.Enabled {
+		t.Errorf("save without workHours: %d, %+v", rec.Code, h.eng.Config().WorkHours)
+	}
+
+	body["workHours"] = map[string]any{"enabled": true, "days": map[string]bool{"mon": true}, "start": "19:00", "end": "10:00"}
+	if rec := h.do(t, http.MethodPost, "/api/config", body); rec.Code != 400 || !strings.Contains(rec.Body.String(), "work_hours") {
+		t.Errorf("start after end: %d (%s)", rec.Code, rec.Body)
 	}
 }
