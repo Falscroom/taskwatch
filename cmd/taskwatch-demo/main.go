@@ -158,7 +158,9 @@ func seed(srv *fakeapi.Server) {
 		fakeapi.MR{MergeRequest: mr(6, "Новый онбординг", "feature/onboarding", func(m *gitlab.MergeRequest) {
 			m.Author = anna
 			m.CreatedAt = ago(28 * time.Hour)
-		}), Reviewers: []gitlab.Reviewer{{User: me, State: "unreviewed"}}},
+		}), Reviewers: []gitlab.Reviewer{{User: me, State: "unreviewed"}},
+			// Апрув сброшен новым пушем — карточка помечена «Апрувил раньше».
+			Notes: []gitlab.Note{{ID: 601, System: true, Author: me, Body: "approved this merge request"}}},
 		fakeapi.MR{MergeRequest: mr(7, "Метрики латентности", "feature/latency", func(m *gitlab.MergeRequest) {
 			m.Author = oleg
 		}), ApprovedBy: []string{"me"}, Reviewers: []gitlab.Reviewer{{User: me, State: "approved"}}},

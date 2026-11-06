@@ -63,7 +63,7 @@ func TestEndpoints(t *testing.T) {
 		case "/api/v4/projects/7/merge_requests/3/reviewers":
 			_, _ = w.Write([]byte(`[{"user":{"username":"bob"},"state":"approved"}]`))
 		case "/api/v4/projects/7/merge_requests/3/notes":
-			if r.URL.Query().Get("sort") != "desc" || r.URL.Query().Get("per_page") != "50" {
+			if r.URL.Query().Get("sort") != "desc" || r.URL.Query().Get("per_page") != "100" {
 				t.Errorf("notes query = %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`[{"id":1,"body":"hi","system":false,"author":{"username":"bob"}}]`))

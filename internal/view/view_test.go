@@ -206,6 +206,23 @@ func TestReviewCard(t *testing.T) {
 	}
 }
 
+func TestReviewApprovedEarlier(t *testing.T) {
+	mr := cleanMR(5)
+	mr.Author = domain.User{Username: "bob"}
+	mr.Reviewers = []domain.Reviewer{{User: domain.User{Username: "me"}, State: domain.ReviewerUnreviewed}}
+	mr.Notes = []domain.Note{{System: true, Author: domain.User{Username: "me"}, Body: "approved this merge request"}}
+	// Апрув сброшен пушем: карточка снова ждёт ревью и помечена.
+	c := card(t, build(&domain.Snapshot{Reviews: []*domain.MR{mr}}, nil), "mr:5")
+	if c.Group != GroupReview || len(c.Badges) != 1 || c.Badges[0] != (Badge{"Апрувил раньше", ToneGreen}) {
+		t.Errorf("reset approval: group = %s, badges = %v", c.Group, c.Badges)
+	}
+	// Апрув на месте — пометка не нужна.
+	mr.ApprovedBy = []string{"me"}
+	if c := card(t, build(&domain.Snapshot{Reviews: []*domain.MR{mr}}, nil), "mr:5"); len(c.Badges) != 0 {
+		t.Errorf("approved now: badges = %v", c.Badges)
+	}
+}
+
 func TestReviewers(t *testing.T) {
 	mr := cleanMR(1)
 	mr.Reviewers = []domain.Reviewer{

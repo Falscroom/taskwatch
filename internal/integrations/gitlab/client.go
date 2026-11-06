@@ -137,7 +137,7 @@ func (c *Client) Reviewers(ctx context.Context, projectID, iid int) ([]Reviewer,
 }
 
 func (c *Client) Notes(ctx context.Context, projectID, iid int) ([]Note, error) {
-	q := url.Values{"sort": {"desc"}, "order_by": {"created_at"}, "per_page": {"50"}}
+	q := url.Values{"sort": {"desc"}, "order_by": {"created_at"}, "per_page": {"100"}}
 	var out []Note
 	return out, c.api.Get(ctx, fmt.Sprintf("/projects/%d/merge_requests/%d/notes", projectID, iid), q, &out)
 }

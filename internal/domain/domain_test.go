@@ -5,6 +5,27 @@ import (
 	"time"
 )
 
+func TestApprovedEarlierBy(t *testing.T) {
+	approved := Note{System: true, Author: User{Username: "me"}, Body: "approved this merge request"}
+	cases := []struct {
+		name string
+		mr   MR
+		want bool
+	}{
+		{"never approved", MR{Notes: []Note{{System: true, Author: User{Username: "me"}, Body: "added 1 commit"}}}, false},
+		{"approval reset by a push", MR{Notes: []Note{approved}}, true},
+		{"approved right now", MR{Notes: []Note{approved}, ApprovedBy: []string{"me"}}, false},
+		{"someone else approved", MR{Notes: []Note{{System: true, Author: User{Username: "bob"}, Body: approved.Body}}}, false},
+		{"a comment quoting the phrase", MR{Notes: []Note{{Author: User{Username: "me"}, Body: approved.Body}}}, false},
+		{"reviewer state unapproved", MR{Reviewers: []Reviewer{{User: User{Username: "me"}, State: ReviewerUnapproved}}}, true},
+	}
+	for _, c := range cases {
+		if got := c.mr.ApprovedEarlierBy("me"); got != c.want {
+			t.Errorf("%s: ApprovedEarlierBy = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestDecisionOf(t *testing.T) {
 	mr := &MR{
 		ApprovedBy: []string{"a", "x"},

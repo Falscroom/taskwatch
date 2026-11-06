@@ -6,6 +6,7 @@ package domain
 
 import (
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -92,7 +93,7 @@ type MR struct {
 
 	ApprovedBy []string
 	Reviewers  []Reviewer
-	// Notes — последние комментарии; у смёрженного MR не загружаются.
+	// Notes — последние 100 записей, служебные тоже; у смёрженного MR не загружаются.
 	Notes []Note
 	// Releases — релизные ветки, в которые попал смёрженный MR, и их сборки.
 	Releases []Release
@@ -125,6 +126,27 @@ func (mr *MR) DecisionOf(username string) ReviewDecision {
 		}
 	}
 	return DecisionPending
+}
+
+// approvedNote — начало служебной записи GitLab об апруве.
+const approvedNote = "approved this merge request"
+
+// ApprovedEarlierBy — пользователь апрувил MR раньше, но сейчас апрува нет:
+// его сбросил новый пуш или пользователь снял его сам. Видно по служебной
+// записи GitLab или по состоянию ревьюера «unapproved». Записи загружаются
+// только последние (Notes), так что апрув из очень длинной истории не найдётся.
+func (mr *MR) ApprovedEarlierBy(username string) bool {
+	if mr.DecisionOf(username) == DecisionApproved {
+		return false
+	}
+	for _, r := range mr.Reviewers {
+		if r.User.Username == username && r.State == ReviewerUnapproved {
+			return true
+		}
+	}
+	return slices.ContainsFunc(mr.Notes, func(n Note) bool {
+		return n.System && n.Author.Username == username && strings.HasPrefix(n.Body, approvedNote)
+	})
 }
 
 // ChangesRequested — хоть один ревьюер запросил изменения.

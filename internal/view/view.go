@@ -204,6 +204,10 @@ func (b builder) review(mr *domain.MR) Card {
 	c := baseCard(mr)
 	c.Review = true
 	c.Wait, c.waitHours = wait(mr, b.now)
+	// Повторное ревью: смотреть стоит только то, что изменилось после твоего апрува.
+	if mr.ApprovedEarlierBy(b.policy.GitLabUser) {
+		c.Badges = append(c.Badges, Badge{"Апрувил раньше", ToneGreen})
+	}
 	b.place(&c, mr, b.policy.ReviewStage(mr))
 	return c
 }
