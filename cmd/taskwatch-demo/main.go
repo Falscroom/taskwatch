@@ -1,7 +1,7 @@
-// Команда taskwatch-demo — окно taskwatch в браузере на поддельных GitLab и
-// YouTrack с примерами карточек: для работы над фронтендом без настоящих
-// аккаунтов (make demo). Ничего не трогает: ни Связку ключей, ни ~/.config,
-// уведомления пишутся в лог.
+// Команда taskwatch-demo — окно taskwatch на поддельных GitLab и YouTrack с
+// примерами карточек: для работы над фронтендом без настоящих аккаунтов.
+// В браузере (make demo) или в меню-баре, как настоящее приложение (make demo-app).
+// Ничего не трогает: ни Связку ключей, ни ~/.config, уведомления пишутся в лог.
 package main
 
 import (
@@ -27,23 +27,34 @@ import (
 	"taskwatch/internal/testutil/fakesecrets"
 	"taskwatch/internal/ui/frontend"
 	"taskwatch/internal/ui/httpapi"
+	"taskwatch/internal/ui/tray"
 )
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:7778", "listen address")
+	addr := flag.String("addr", "127.0.0.1:7778", "listen address (браузерный режим)")
+	inTray := flag.Bool("app", false, "окно в меню-баре вместо браузера")
 	flag.Parse()
-	if err := run(*addr); err != nil {
+	if err := run(*addr, *inTray); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(addr string) error {
+func run(addr string, inTray bool) error {
 	srv := fakeapi.Start()
 	defer srv.Close()
 	seed(srv)
 
-	dir, err := os.MkdirTemp("", "taskwatch-demo")
-	if err != nil {
+	// Каталог постоянный и обнуляется при запуске: из меню-бара процесс
+	// завершает Wails, и defer до очистки не доходит.
+	mode := "web"
+	if inTray {
+		mode = "app"
+	}
+	dir := filepath.Join(os.TempDir(), "taskwatch-demo-"+mode)
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
@@ -67,6 +78,12 @@ func run(addr string) error {
 	}
 	eng := engine.New(cfg, store, notify, app.Deps)
 	svc := settings.New(path, fakesecrets.New(map[string]string{settings.AccountGitLab: "demo", settings.AccountYouTrack: "demo"}))
+
+	if inTray {
+		// Цикл опроса tray запускает сам; выход — «Выйти» в меню иконки.
+		log.Printf("демо в меню-баре (поддельные GitLab и YouTrack на %s)", srv.URL)
+		return tray.Run(eng, svc)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

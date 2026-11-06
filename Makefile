@@ -6,7 +6,7 @@ export MACOSX_DEPLOYMENT_TARGET := 14.0
 export CGO_CFLAGS := -mmacosx-version-min=14.0
 export CGO_LDFLAGS := -mmacosx-version-min=14.0
 
-.PHONY: build test test-frontend vet lint fmt check demo status install uninstall dist clean
+.PHONY: build test test-frontend vet lint fmt check demo demo-app status install uninstall dist clean
 
 build:
 	go build -ldflags "-s -w" -trimpath -o $(BIN) ./cmd/taskwatch
@@ -35,6 +35,10 @@ check: vet lint test test-frontend
 # для работы над фронтендом без настоящих аккаунтов.
 demo:
 	go run ./cmd/taskwatch-demo
+
+# demo-app — то же демо в меню-баре, как настоящее приложение (окно Wails).
+demo-app:
+	go run ./cmd/taskwatch-demo -app
 
 status: build
 	./$(BIN) status
