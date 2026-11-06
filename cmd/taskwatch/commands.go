@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -47,6 +48,7 @@ var commands = []command{
 	{"once", "один проход опроса", validConfig, runOnce},
 	{"status", "показать таски спринта, MR, апрувы, сборки", validConfig, runStatus},
 	{"secret-clear", "удалить токены из Связки ключей", noConfig, runSecretClear},
+	{"login-item", "запуск при входе: login-item [on|off] (бинарь из taskwatch.app)", noConfig, runLoginItem},
 }
 
 func lookup(name string) (command, bool) {
@@ -73,6 +75,7 @@ type setup struct {
 	notify   alerts.Notifier
 	notifier *tray.Notifier // для режима app: тот же notify, подключённый к Центру уведомлений
 	addr     string
+	args     []string // аргументы после имени команды
 }
 
 // env — всё, что получает команда. cfg и eng есть, только если команде нужен конфиг.
@@ -141,5 +144,25 @@ func runSecretClear(e env) error {
 		return err
 	}
 	fmt.Println("токены удалены из связки ключей")
+	return nil
+}
+
+// runLoginItem — запуск при входе из терминала: без аргумента показывает
+// состояние, on/off включают и выключают. Работает только бинарь из
+// taskwatch.app: голый бинарь macOS в объекты входа не пускает.
+func runLoginItem(e env) error {
+	if !loginitem.InBundle() {
+		return errors.New("запуск при входе доступен только бинарю из taskwatch.app: /Applications/taskwatch.app/Contents/MacOS/taskwatch login-item")
+	}
+	switch arg := strings.Join(e.args, " "); arg {
+	case "":
+	case "on", "off":
+		if err := loginitem.Set(arg == "on"); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("login-item: %q — нужно on или off", arg)
+	}
+	fmt.Println("запуск при входе:", loginitem.Current())
 	return nil
 }

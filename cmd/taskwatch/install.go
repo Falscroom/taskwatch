@@ -26,7 +26,8 @@ func prepareApp(configPath string) {
 	_, statErr := os.Stat(configPath)
 	fresh := errors.Is(statErr, fs.ErrNotExist)
 	migrated := removeOldInstall(home, bootoutAgent)
-	if (fresh || migrated) && loginitem.Current() == loginitem.NotRegistered {
+	// Уже добавленный (в том числе выключенный пользователем) не трогаем.
+	if (fresh || migrated) && loginitem.InBundle() && !loginitem.Registered() {
 		if err := loginitem.Set(true); err != nil {
 			log.Printf("запуск при входе: %v", err)
 			return

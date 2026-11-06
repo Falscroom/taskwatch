@@ -70,3 +70,15 @@ func TestOnceTicks(t *testing.T) {
 		t.Errorf("requests = %v, sent = %d (first run must not notify)", srv.Requests(), sent)
 	}
 }
+
+// Голый бинарь (как этот тест) в объекты входа macOS не пускает — команда об
+// этом говорит, а не молча ничего не делает.
+func TestLoginItemOutsideBundle(t *testing.T) {
+	cmd, ok := lookup("login-item")
+	if !ok {
+		t.Fatal("login-item command is missing")
+	}
+	if err := execute(cmd, setup{args: []string{"on"}}); err == nil || !strings.Contains(err.Error(), "taskwatch.app") {
+		t.Errorf("err = %v", err)
+	}
+}

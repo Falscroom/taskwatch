@@ -10,6 +10,10 @@ package loginitem
 #import <Foundation/Foundation.h>
 #import <ServiceManagement/ServiceManagement.h>
 
+static int loginItemInBundle(void) {
+	return [NSBundle mainBundle].bundleIdentifier != nil;
+}
+
 static int loginItemStatus(void) {
 	return (int)[SMAppService mainAppService].status;
 }
@@ -40,11 +44,36 @@ const (
 	NotRegistered    Status = 0 // не добавлен
 	Enabled          Status = 1 // добавлен и включён
 	RequiresApproval Status = 2 // добавлен, но выключен в Системных настройках
-	NotFound         Status = 3 // macOS не нашла приложение — запущено не из бандла
+	NotFound         Status = 3 // не найден: так macOS отвечает и до первой регистрации
 )
 
-// Current — текущее состояние.
+// Current — текущее состояние. До первой регистрации macOS отдаёт NotFound —
+// по нему не понять, бандл это или голый бинарь; для этого есть InBundle.
 func Current() Status { return Status(C.loginItemStatus()) }
+
+// InBundle — запущено ли приложение из бандла с идентификатором: только таким
+// можно управлять как объектом входа.
+func InBundle() bool { return C.loginItemInBundle() != 0 }
+
+// Registered — добавлен ли объект входа: включённым или выключенным в
+// Системных настройках.
+func Registered() bool {
+	s := Current()
+	return s == Enabled || s == RequiresApproval
+}
+
+func (s Status) String() string {
+	switch s {
+	case NotRegistered, NotFound:
+		return "не добавлен"
+	case Enabled:
+		return "включён"
+	case RequiresApproval:
+		return "выключен в Системных настройках → Основные → Объекты входа"
+	default:
+		return "неизвестно"
+	}
+}
 
 // Set добавляет приложение в объекты входа или убирает его оттуда.
 func Set(on bool) error {
@@ -63,7 +92,7 @@ func Set(on bool) error {
 type Item struct{}
 
 // Supported — можно ли управлять объектом входа: только из бандла.
-func (Item) Supported() bool { return Current() != NotFound }
+func (Item) Supported() bool { return InBundle() }
 
 // Enabled — включён ли запуск при входе.
 func (Item) Enabled() bool { return Current() == Enabled }

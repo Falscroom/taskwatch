@@ -45,6 +45,7 @@ func main() {
 		notify:   notifier.Notify,
 		notifier: notifier,
 		addr:     *addr,
+		args:     flag.Args()[min(1, flag.NArg()):],
 	})
 	if err != nil {
 		log.Fatal(err)
