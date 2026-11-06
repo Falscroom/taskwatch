@@ -165,8 +165,8 @@ func TestCollectMergedMR(t *testing.T) {
 		t.Fatal(err)
 	}
 	mr := snap.Orphans[0]
-	if strings.Join(mr.ReleaseBranches, ",") != "release/1.0,release/1.1" {
-		t.Errorf("release branches = %v", mr.ReleaseBranches)
+	if len(mr.Releases) != 2 || mr.Releases[0].Branch != "release/1.0" || mr.Releases[1].Branch != "release/1.1" {
+		t.Errorf("releases = %+v", mr.Releases)
 	}
 	if mr.Approvals() != 0 || mr.Reviewers != nil || mr.Notes != nil {
 		t.Errorf("merged MR must not load approvals/reviewers/notes: %+v", mr)

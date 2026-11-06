@@ -3,6 +3,7 @@ package gitlab
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -33,7 +34,7 @@ func (s *Source) ReviewRequested(ctx context.Context) ([]*domain.MR, error) {
 
 // Load — MR целиком: с пайплайном и отставанием, а у открытого — с апрувами,
 // ревьюерами и комментариями. Смёрженный уже не меняется: у него нужны только
-// релизные ветки, куда попал его коммит, — минус три запроса на каждый за тик.
+// релизные ветки, куда попал его коммит, и их сборки.
 func (s *Source) Load(ctx context.Context, item *domain.MR) (*domain.MR, error) {
 	full, err := s.client.MergeRequest(ctx, item.ProjectID, item.IID)
 	if err != nil {
@@ -52,7 +53,7 @@ func (s *Source) Load(ctx context.Context, item *domain.MR) (*domain.MR, error) 
 		}
 		for _, b := range branches {
 			if strings.HasPrefix(b, s.releasePrefix) {
-				mr.ReleaseBranches = append(mr.ReleaseBranches, b)
+				mr.Releases = append(mr.Releases, domain.Release{Branch: b, Build: s.releaseBuild(ctx, full.ProjectID, b, sha)})
 			}
 		}
 		return mr, nil
@@ -80,6 +81,41 @@ func (s *Source) Load(ctx context.Context, item *domain.MR) (*domain.MR, error) 
 		mr.Notes = append(mr.Notes, domain.Note{ID: n.ID, Author: toUser(n.Author), Body: n.Body, System: n.System})
 	}
 	return mr, nil
+}
+
+// releaseBuild — последняя сборка релизной ветки, в которой уже есть коммит sha:
+// пайплайн открытого MR из этой ветки («Draft: Release …»), а без такого MR —
+// самой ветки. Сборка — дополнение к карточке: если GitLab её не отдал, MR
+// показываем без неё, а не роняем весь опрос.
+func (s *Source) releaseBuild(ctx context.Context, project int, branch, sha string) *domain.Pipeline {
+	p, err := s.releasePipeline(ctx, project, branch)
+	if err == nil && p != nil {
+		var in bool
+		if in, err = s.client.Contains(ctx, project, p.SHA, sha); err == nil && in {
+			return toPipeline(p)
+		}
+	}
+	if err != nil {
+		log.Printf("сборка %s: %v", branch, err)
+	}
+	return nil
+}
+
+func (s *Source) releasePipeline(ctx context.Context, project int, branch string) (*Pipeline, error) {
+	mr, ok, err := s.client.OpenMRFrom(ctx, project, branch)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		full, err := s.client.MergeRequest(ctx, project, mr.IID)
+		if err != nil {
+			return nil, err
+		}
+		if full.HeadPipeline != nil {
+			return full.HeadPipeline, nil
+		}
+	}
+	return s.client.LatestPipeline(ctx, project, branch)
 }
 
 func toMRs(in []MergeRequest, err error) ([]*domain.MR, error) {
@@ -113,9 +149,13 @@ func toMR(m MergeRequest) *domain.MR {
 		Comments:            m.UserNotesCount,
 	}
 	if p := m.HeadPipeline; p != nil {
-		mr.Pipeline = &domain.Pipeline{ID: p.ID, Status: domain.PipelineStatus(p.Status), WebURL: p.WebURL}
+		mr.Pipeline = toPipeline(p)
 	}
 	return mr
+}
+
+func toPipeline(p *Pipeline) *domain.Pipeline {
+	return &domain.Pipeline{ID: p.ID, Status: domain.PipelineStatus(p.Status), WebURL: p.WebURL}
 }
 
 func toUser(u User) domain.User { return domain.User{Username: u.Username, Name: u.Name} }

@@ -92,3 +92,71 @@ func TestSourceMergedBranchesError(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// Сборка релиза: пайплайн релизного MR, если в нём уже есть коммит MR; без
+// релизного MR — пайплайн ветки; ещё без коммита — сборки нет.
+func TestSourceReleaseBuild(t *testing.T) {
+	mine := fakeapi.MR{
+		MergeRequest: gitlab.MergeRequest{ID: 1, IID: 3, ProjectID: 7, State: "merged", MergeCommitSHA: "m1"},
+		Branches:     []string{"main", "release/1.0"},
+	}
+	load := func(t *testing.T, srv *fakeapi.Server) *domain.MR {
+		t.Helper()
+		src := source(srv, "release/")
+		list, err := src.Authored(context.Background(), time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		mr, err := src.Load(context.Background(), list[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(mr.Releases) != 1 || mr.Releases[0].Branch != "release/1.0" {
+			t.Fatalf("releases = %+v", mr.Releases)
+		}
+		return mr
+	}
+	releaseMR := fakeapi.MR{MergeRequest: gitlab.MergeRequest{
+		ID: 50, IID: 9, ProjectID: 7, State: "opened", Title: "Draft: Release 1.0", SourceBranch: "release/1.0",
+		HeadPipeline: &gitlab.Pipeline{ID: 90, Status: "failed", WebURL: "https://gl/p/90", SHA: "r2"},
+	}}
+
+	t.Run("release MR pipeline with the commit", func(t *testing.T) {
+		srv := fakeapi.New(t)
+		srv.SetMine(mine)
+		srv.SetOthers(releaseMR)
+		srv.SetContains("r2", "m1")
+		b := load(t, srv).Releases[0].Build
+		if b == nil || b.ID != 90 || b.Status != "failed" || b.WebURL != "https://gl/p/90" {
+			t.Errorf("build = %+v", b)
+		}
+	})
+
+	t.Run("pipeline started before the commit landed", func(t *testing.T) {
+		srv := fakeapi.New(t)
+		srv.SetMine(mine)
+		srv.SetOthers(releaseMR)
+		if b := load(t, srv).Releases[0].Build; b != nil {
+			t.Errorf("build without the commit = %+v", b)
+		}
+	})
+
+	t.Run("no release MR: branch pipeline", func(t *testing.T) {
+		srv := fakeapi.New(t)
+		srv.SetMine(mine)
+		srv.SetPipelines("release/1.0", gitlab.Pipeline{ID: 91, Status: "success", SHA: "m1"})
+		if b := load(t, srv).Releases[0].Build; b == nil || b.ID != 91 || b.Status != "success" {
+			t.Errorf("build = %+v", b)
+		}
+	})
+
+	// Сборка — дополнение: если GitLab её не отдал, MR всё равно загружен.
+	t.Run("lookup error keeps the MR", func(t *testing.T) {
+		srv := fakeapi.New(t)
+		srv.SetMine(mine)
+		srv.FailPipelines(500)
+		if b := load(t, srv).Releases[0].Build; b != nil {
+			t.Errorf("build = %+v", b)
+		}
+	})
+}

@@ -33,6 +33,7 @@ type Pipeline struct {
 	ID     int    `json:"id"`
 	Status string `json:"status"`
 	WebURL string `json:"web_url"`
+	SHA    string `json:"sha"`
 }
 
 type MergeRequest struct {
@@ -139,6 +140,42 @@ func (c *Client) Notes(ctx context.Context, projectID, iid int) ([]Note, error) 
 	q := url.Values{"sort": {"desc"}, "order_by": {"created_at"}, "per_page": {"50"}}
 	var out []Note
 	return out, c.api.Get(ctx, fmt.Sprintf("/projects/%d/merge_requests/%d/notes", projectID, iid), q, &out)
+}
+
+// OpenMRFrom — открытый MR из ветки branch (у релизной это обычно «Draft: Release …»);
+// ok=false, если такого нет. Без head_pipeline: его отдаёт только MergeRequest.
+func (c *Client) OpenMRFrom(ctx context.Context, projectID int, branch string) (mr MergeRequest, ok bool, err error) {
+	q := url.Values{"state": {"opened"}, "source_branch": {branch}, "per_page": {"1"}}
+	var out []MergeRequest
+	if err := c.api.Get(ctx, fmt.Sprintf("/projects/%d/merge_requests", projectID), q, &out); err != nil || len(out) == 0 {
+		return MergeRequest{}, false, err
+	}
+	return out[0], true, nil
+}
+
+// LatestPipeline — последний пайплайн ветки; nil, если пайплайнов нет.
+func (c *Client) LatestPipeline(ctx context.Context, projectID int, ref string) (*Pipeline, error) {
+	q := url.Values{"ref": {ref}, "per_page": {"1"}}
+	var out []Pipeline
+	if err := c.api.Get(ctx, fmt.Sprintf("/projects/%d/pipelines", projectID), q, &out); err != nil || len(out) == 0 {
+		return nil, err
+	}
+	return &out[0], nil
+}
+
+// Contains — есть ли коммит sha в истории коммита head: их общий предок — сам sha.
+func (c *Client) Contains(ctx context.Context, projectID int, head, sha string) (bool, error) {
+	if head == sha {
+		return true, nil
+	}
+	q := url.Values{"refs[]": {head, sha}}
+	var base struct {
+		ID string `json:"id"`
+	}
+	if err := c.api.Get(ctx, fmt.Sprintf("/projects/%d/repository/merge_base", projectID), q, &base); err != nil {
+		return false, err
+	}
+	return base.ID == sha, nil
 }
 
 // CommitBranches — ветки, в которых есть коммит.

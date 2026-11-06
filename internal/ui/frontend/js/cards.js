@@ -6,11 +6,12 @@ import { esc, loaded, muteLabel } from "./format.js";
 /**
  * @typedef {{username: string, name: string, initials: string, decision?: string}} Person
  * @typedef {{text: string, tone: string}} Badge
+ * @typedef {{branch: string, pipeline?: string, url?: string}} Release — релизная ветка и сборка релиза с этим MR
  * @typedef {{
  *   key: string, group: string, mine: boolean, review: boolean, title: string, url: string,
  *   issueId?: string, issueUrl?: string, issueState?: string,
  *   author?: Person, reviewers: Person[], pipeline?: string, pipelineUrl?: string,
- *   behind: number, comments: number, release: string[], badges: Badge[],
+ *   behind: number, comments: number, release: Release[], badges: Badge[],
  *   action?: {label: string, issueId: string}, wait?: string, muted?: boolean, mutedUntil?: string
  * }} Card
  * @typedef {{version: number, updatedAt: string, error?: string, needsYou: number, cards: Card[]}} View
@@ -48,6 +49,17 @@ const ICONS = {
   bell: '<svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>',
 };
 
+/**
+ * releaseChip — релизная ветка; когда сборка релиза с этим MR уже есть —
+ * со значком её статуса, клик открывает пайплайн.
+ * @param {Release} r
+ */
+function releaseChip(r) {
+  const tone = r.pipeline ? ` ${esc(r.pipeline)}` : "";
+  const open = r.url ? ` data-action="open" data-url="${esc(r.url)}" title="Сборка релиза"` : "";
+  return `<span class="chip release${tone}"${open}>${esc(r.branch)}${r.pipeline ? ICONS[r.pipeline] ?? "" : ""}</span>`;
+}
+
 /** @param {Person} p */
 function avatar(p) {
   const title = p.name ? `${p.name} (@${p.username})` : `@${p.username}`;
@@ -73,7 +85,7 @@ export function renderCard(c, now = Date.now()) {
     meta.push(`<span class="chip issue" data-action="open" data-url="${esc(c.issueUrl)}" title="Открыть в YouTrack">${esc(c.issueId)}${c.issueState ? " · " + esc(c.issueState) : ""}</span>`);
   }
   if (c.behind > 0 && c.group !== "merged") meta.push(`<span class="chip behind" title="Отстаёт от target-ветки">↓${c.behind}</span>`);
-  for (const r of c.release) meta.push(`<span class="chip release">${esc(r)}</span>`);
+  for (const r of c.release) meta.push(releaseChip(r));
   if (c.wait) meta.push(`<span class="chip wait" title="MR открыт уже">⏳ ${esc(c.wait)}</span>`);
 
   const side = [];

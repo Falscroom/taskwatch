@@ -80,7 +80,7 @@ func TestMREvents(t *testing.T) {
 	}
 	mr.Pipeline = &domain.Pipeline{ID: 77, Status: "failed", WebURL: "https://gl/p/77"}
 	mr.HasConflicts = true
-	mr.ReleaseBranches = []string{"release/1.0", "release/1.1"}
+	mr.Releases = []domain.Release{{Branch: "release/1.0"}, {Branch: "release/1.1"}}
 
 	t.Run("linked to task", func(t *testing.T) {
 		got := byKey(t, Evaluate(&domain.Snapshot{Tasks: []*domain.Task{task("ABC-1", "In Progress", mr)}}, testPolicy()))
@@ -296,5 +296,62 @@ func TestKindLoud(t *testing.T) {
 		if k.Loud() {
 			t.Errorf("kind %d must be quiet", k)
 		}
+	}
+}
+
+func TestReleaseBuildEvents(t *testing.T) {
+	cases := []struct {
+		status    domain.PipelineStatus
+		key       string
+		title     string
+		body      string
+		kind      Kind
+		wantEvent bool
+	}{
+		{"failed", "release-build:10:90:failed", "Сборка релиза упала", "release/1.0 · пайплайн #90", KindReleaseFailed, true},
+		{"canceled", "release-build:10:90:canceled", "Сборка релиза отменена", "release/1.0 · пайплайн #90", KindReleaseFailed, true},
+		{"success", "release-build:10:90:success", "Релиз собрался", "release/1.0 · пайплайн #90", KindReleaseBuilt, true},
+		{"manual", "release-build:10:90:manual", "Релиз собрался", "release/1.0 · пайплайн #90 · ждёт ручного шага", KindReleaseBuilt, true},
+		{"running", "", "", "", 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.status), func(t *testing.T) {
+			mr := openMR(10)
+			mr.State = domain.MRMerged
+			mr.Releases = []domain.Release{{Branch: "release/1.0", Build: &domain.Pipeline{ID: 90, Status: tc.status, WebURL: "https://gl/p/90"}}}
+			got := byKey(t, Evaluate(&domain.Snapshot{Tasks: []*domain.Task{task("ABC-1", "Done", mr)}}, testPolicy()))
+			var builds []Event
+			for k, e := range got {
+				if strings.HasPrefix(k, "release-build:") {
+					builds = append(builds, e)
+				}
+			}
+			if !tc.wantEvent {
+				if len(builds) != 0 {
+					t.Errorf("running build must stay silent: %+v", builds)
+				}
+				return
+			}
+			e, ok := got[tc.key]
+			if !ok || len(builds) != 1 {
+				t.Fatalf("events = %v", got)
+			}
+			if e.Title != tc.title || e.Body != tc.body || e.Kind != tc.kind || e.Subtitle != "ABC-1 · Summary ABC-1" ||
+				e.URL != "https://gl/p/90" || e.MRID != 10 || e.Thread != "mr:10" {
+				t.Errorf("event = %+v", e)
+			}
+		})
+	}
+
+	// Сборки с этим MR ещё не было — только «Попало в …».
+	mr := openMR(11)
+	mr.State = domain.MRMerged
+	mr.Releases = []domain.Release{{Branch: "release/1.0"}}
+	got := byKey(t, Evaluate(&domain.Snapshot{Orphans: []*domain.MR{mr}}, testPolicy()))
+	if len(got) != 1 || got["release:11:release/1.0"].Title != "Попало в release/1.0" {
+		t.Errorf("events = %v", got)
+	}
+	if !KindReleaseFailed.Loud() || KindReleaseBuilt.Loud() {
+		t.Error("a failed release build is loud, a successful one is quiet")
 	}
 }

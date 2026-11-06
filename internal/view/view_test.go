@@ -379,3 +379,18 @@ func TestInitials(t *testing.T) {
 		}
 	}
 }
+
+// Релизная ветка на карточке — со статусом сборки релиза, если она уже есть.
+func TestReleaseChips(t *testing.T) {
+	merged := cleanMR(5)
+	merged.State = domain.MRMerged
+	merged.Releases = []domain.Release{
+		{Branch: "release/1.0", Build: &domain.Pipeline{ID: 90, Status: "failed", WebURL: "https://gl/p/90"}},
+		{Branch: "release/1.1"},
+	}
+	c := card(t, build(&domain.Snapshot{Orphans: []*domain.MR{merged}}, nil), "mr:5")
+	want := []Release{{Branch: "release/1.0", Pipeline: ToneRed, URL: "https://gl/p/90"}, {Branch: "release/1.1"}}
+	if len(c.Release) != 2 || c.Release[0] != want[0] || c.Release[1] != want[1] {
+		t.Errorf("release = %+v", c.Release)
+	}
+}

@@ -106,6 +106,59 @@ func TestEndpoints(t *testing.T) {
 	}
 }
 
+func TestReleaseCalls(t *testing.T) {
+	var reqs []string
+	c := server(t, func(w http.ResponseWriter, r *http.Request) {
+		reqs = append(reqs, r.URL.Path+"?"+r.URL.RawQuery)
+		switch r.URL.Path {
+		case "/api/v4/projects/1/merge_requests":
+			_, _ = w.Write([]byte(`[{"iid":9,"title":"Draft: Release 1.0","source_branch":"release/1.0"}]`))
+		case "/api/v4/projects/1/pipelines":
+			_, _ = w.Write([]byte(`[{"id":77,"status":"failed","sha":"head"}]`))
+		case "/api/v4/projects/1/repository/merge_base":
+			_, _ = w.Write([]byte(`{"id":"mine"}`))
+		}
+	})
+	ctx := context.Background()
+
+	mr, ok, err := c.OpenMRFrom(ctx, 1, "release/1.0")
+	if err != nil || !ok || mr.IID != 9 {
+		t.Fatalf("OpenMRFrom = %+v, %v, %v", mr, ok, err)
+	}
+	p, err := c.LatestPipeline(ctx, 1, "release/1.0")
+	if err != nil || p == nil || p.ID != 77 || p.SHA != "head" {
+		t.Fatalf("LatestPipeline = %+v, %v", p, err)
+	}
+	if in, err := c.Contains(ctx, 1, "head", "mine"); err != nil || !in {
+		t.Errorf("Contains = %v, %v", in, err)
+	}
+	if in, err := c.Contains(ctx, 1, "head", "other"); err != nil || in {
+		t.Errorf("Contains(other) = %v, %v", in, err)
+	}
+	n := len(reqs)
+	if in, _ := c.Contains(ctx, 1, "same", "same"); !in || len(reqs) != n {
+		t.Error("the head commit itself is contained without a request")
+	}
+	want := []string{
+		"/api/v4/projects/1/merge_requests?per_page=1&source_branch=release%2F1.0&state=opened",
+		"/api/v4/projects/1/pipelines?per_page=1&ref=release%2F1.0",
+		"/api/v4/projects/1/repository/merge_base?refs%5B%5D=head&refs%5B%5D=mine",
+	}
+	for i, w := range want {
+		if reqs[i] != w {
+			t.Errorf("request %d = %s, want %s", i, reqs[i], w)
+		}
+	}
+
+	empty := server(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+	if _, ok, err := empty.OpenMRFrom(ctx, 1, "release/2"); ok || err != nil {
+		t.Errorf("no release MR: ok = %v, err = %v", ok, err)
+	}
+	if p, err := empty.LatestPipeline(ctx, 1, "release/2"); p != nil || err != nil {
+		t.Errorf("no pipelines: %+v, %v", p, err)
+	}
+}
+
 func TestStatusError(t *testing.T) {
 	c := server(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "401 Unauthorized", http.StatusUnauthorized)

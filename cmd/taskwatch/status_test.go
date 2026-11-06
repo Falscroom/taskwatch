@@ -11,7 +11,7 @@ import (
 func TestPrintStatus(t *testing.T) {
 	mr := &domain.MR{IID: 7, State: domain.MROpened, Title: "Fix", Behind: 3,
 		Pipeline: &domain.Pipeline{Status: "failed"}, ApprovedBy: []string{"a", "b"}}
-	merged := &domain.MR{IID: 8, State: domain.MRMerged, Title: "Old", ReleaseBranches: []string{"release/1", "release/2"}}
+	merged := &domain.MR{IID: 8, State: domain.MRMerged, Title: "Old", Releases: []domain.Release{{Branch: "release/1"}, {Branch: "release/2"}}}
 	snap := &domain.Snapshot{
 		Tasks: []*domain.Task{
 			{ID: "ABC-1", Summary: "Login", State: "Code Review", MRs: []*domain.MR{mr}},

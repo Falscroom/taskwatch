@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -42,16 +43,22 @@ type Command struct {
 type Server struct {
 	*httptest.Server
 
-	mu       sync.Mutex
-	mine     []MR
-	reviews  []MR
-	issues   []Issue
-	agiles   []youtrack.Agile
-	requests []string
-	commands []Command
-	failCode int
-	cmdFail  int
-	refsFail int
+	mu      sync.Mutex
+	mine    []MR
+	reviews []MR
+	others  []MR // чужие MR проекта, например релизный «Draft: Release …»
+	issues  []Issue
+	agiles  []youtrack.Agile
+	// pipelines — пайплайны веток, новые первыми; contains — какие коммиты
+	// входят в историю коммита (для merge_base).
+	pipelines map[string][]gitlab.Pipeline
+	contains  map[string][]string
+	requests  []string
+	commands  []Command
+	failCode  int
+	cmdFail   int
+	refsFail  int
+	pipeFail  int
 
 	GitLabUser    string
 	YouTrackLogin string
@@ -77,6 +84,30 @@ func (s *Server) SetMine(mrs ...MR) { s.mu.Lock(); s.mine = mrs; s.mu.Unlock() }
 // SetReviews задаёт MR, где ты ревьюер.
 func (s *Server) SetReviews(mrs ...MR) { s.mu.Lock(); s.reviews = mrs; s.mu.Unlock() }
 
+// SetOthers задаёт чужие MR проекта: их не возвращают списки «мои» и «на ревью»,
+// но находит поиск по исходной ветке и запрос MR по номеру.
+func (s *Server) SetOthers(mrs ...MR) { s.mu.Lock(); s.others = mrs; s.mu.Unlock() }
+
+// SetPipelines задаёт пайплайны ветки ref, новые первыми.
+func (s *Server) SetPipelines(ref string, pipelines ...gitlab.Pipeline) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pipelines == nil {
+		s.pipelines = map[string][]gitlab.Pipeline{}
+	}
+	s.pipelines[ref] = pipelines
+}
+
+// SetContains объявляет, что коммиты shas входят в историю коммита head.
+func (s *Server) SetContains(head string, shas ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.contains == nil {
+		s.contains = map[string][]string{}
+	}
+	s.contains[head] = shas
+}
+
 // SetIssues задаёт таски, которые вернёт любой запрос задач.
 func (s *Server) SetIssues(issues ...Issue) { s.mu.Lock(); s.issues = issues; s.mu.Unlock() }
 
@@ -91,6 +122,9 @@ func (s *Server) FailRefs(code int) { s.mu.Lock(); s.refsFail = code; s.mu.Unloc
 
 // FailCommands заставляет POST /api/commands отвечать этим статусом; 0 — принимать.
 func (s *Server) FailCommands(code int) { s.mu.Lock(); s.cmdFail = code; s.mu.Unlock() }
+
+// FailPipelines заставляет список пайплайнов ветки отвечать этим статусом; 0 — отвечать.
+func (s *Server) FailPipelines(code int) { s.mu.Lock(); s.pipeFail = code; s.mu.Unlock() }
 
 // Requests — запросы в порядке поступления: "GET /api/v4/user?…".
 func (s *Server) Requests() []string {
@@ -133,6 +167,44 @@ func (s *Server) routes() http.Handler {
 			out = append(out, m.MergeRequest)
 		}
 		write(w, out)
+	})
+	mux.HandleFunc("GET /api/v4/projects/{project}/merge_requests", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		out := []gitlab.MergeRequest{}
+		for _, m := range s.allMRs() {
+			if strconv.Itoa(m.ProjectID) == r.PathValue("project") && m.SourceBranch == q.Get("source_branch") &&
+				(q.Get("state") == "" || m.State == q.Get("state")) {
+				out = append(out, m.MergeRequest)
+			}
+		}
+		write(w, out)
+	})
+	mux.HandleFunc("GET /api/v4/projects/{project}/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.pipeFail != 0 {
+			http.Error(w, "pipelines failed", s.pipeFail)
+			return
+		}
+		out := nonNil(s.pipelines[r.URL.Query().Get("ref")])
+		if len(out) > 1 {
+			out = out[:1] // per_page=1: только последний
+		}
+		write(w, out)
+	})
+	mux.HandleFunc("GET /api/v4/projects/{project}/repository/merge_base", func(w http.ResponseWriter, r *http.Request) {
+		refs := r.URL.Query()["refs[]"]
+		if len(refs) != 2 {
+			http.Error(w, "two refs required", http.StatusBadRequest)
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		base := "unrelated"
+		if slices.Contains(s.contains[refs[0]], refs[1]) {
+			base = refs[1]
+		}
+		write(w, map[string]string{"id": base})
 	})
 	mux.HandleFunc("GET /api/v4/projects/{project}/merge_requests/{iid}", func(w http.ResponseWriter, r *http.Request) {
 		s.withMR(w, r, func(m MR) any { return m.MergeRequest })
@@ -249,7 +321,7 @@ func (s *Server) routes() http.Handler {
 func (s *Server) allMRs() []MR {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append(append([]MR(nil), s.mine...), s.reviews...)
+	return slices.Concat(s.mine, s.reviews, s.others)
 }
 
 func (s *Server) withMR(w http.ResponseWriter, r *http.Request, fn func(MR) any) {

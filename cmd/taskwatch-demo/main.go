@@ -149,6 +149,12 @@ func seed(srv *fakeapi.Server) {
 			m.CreatedAt = ago(3 * time.Hour)
 		})},
 	)
+	// Релизный MR: его сборка с «Лимитами API» упала — на карточке красный значок у ветки.
+	srv.SetOthers(fakeapi.MR{MergeRequest: gitlab.MergeRequest{
+		ID: 1050, IID: 50, ProjectID: 1, Title: "Draft: Release 2026.11", SourceBranch: "release/2026.11", State: "opened",
+		Author: oleg, HeadPipeline: &gitlab.Pipeline{ID: 120, Status: "failed", WebURL: "https://gitlab.example.com/app/-/pipelines/120", SHA: "release-head"},
+	}})
+	srv.SetContains("release-head", "merged-4")
 	srv.SetReviews(
 		fakeapi.MR{MergeRequest: mr(6, "Новый онбординг", "feature/onboarding", func(m *gitlab.MergeRequest) {
 			m.Author = anna

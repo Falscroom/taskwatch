@@ -26,7 +26,7 @@ test("card: transition, pipeline, issue chip and badges", () => {
     action: { label: "Ready for QA", issueId: "ABC-1" },
     pipeline: "red", pipelineUrl: "https://gl/p/1",
     issueId: "ABC-1", issueUrl: "https://yt/ABC-1", issueState: "Review",
-    badges: [{ text: "Конфликты", tone: "red" }], behind: 4, wait: "2д 1ч", release: ["release/1"],
+    badges: [{ text: "Конфликты", tone: "red" }], behind: 4, wait: "2д 1ч", release: [{ branch: "release/1" }],
   }));
   assert.match(html, /data-action="transition" data-issue="ABC-1">→ Ready for QA/);
   assert.match(html, /class="status red" data-action="open" data-url="https:\/\/gl\/p\/1"/);
@@ -36,6 +36,15 @@ test("card: transition, pipeline, issue chip and badges", () => {
   assert.match(html, /⏳ 2д 1ч/);
   assert.match(html, /release\/1/);
   assert.match(html, /tone-red/);
+});
+
+test("card: release chip shows the release build and opens it", () => {
+  const html = renderCard(card({
+    group: "merged",
+    release: [{ branch: "release/1", pipeline: "red", url: "https://gl/p/90" }, { branch: "release/<2>" }],
+  }));
+  assert.match(html, /class="chip release red" data-action="open" data-url="https:\/\/gl\/p\/90" title="Сборка релиза">release\/1<svg/);
+  assert.match(html, /<span class="chip release">release\/&lt;2&gt;<\/span>/);
 });
 
 test("card: muted cards offer unmute and show until when", () => {

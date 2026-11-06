@@ -69,24 +69,24 @@ type Action struct {
 }
 
 type Card struct {
-	Key         string   `json:"key"`
-	Group       string   `json:"group"`
-	Mine        bool     `json:"mine"`
-	Review      bool     `json:"review"`
-	Title       string   `json:"title"`
-	URL         string   `json:"url"`
-	IssueID     string   `json:"issueId,omitempty"`
-	IssueURL    string   `json:"issueUrl,omitempty"`
-	IssueState  string   `json:"issueState,omitempty"`
-	Author      *Person  `json:"author,omitempty"`
-	Reviewers   []Person `json:"reviewers"`
-	Pipeline    string   `json:"pipeline,omitempty"` // green, yellow, red
-	PipelineURL string   `json:"pipelineUrl,omitempty"`
-	Behind      int      `json:"behind"`
-	Comments    int      `json:"comments"`
-	Release     []string `json:"release"`
-	Badges      []Badge  `json:"badges"`
-	Action      *Action  `json:"action,omitempty"`
+	Key         string    `json:"key"`
+	Group       string    `json:"group"`
+	Mine        bool      `json:"mine"`
+	Review      bool      `json:"review"`
+	Title       string    `json:"title"`
+	URL         string    `json:"url"`
+	IssueID     string    `json:"issueId,omitempty"`
+	IssueURL    string    `json:"issueUrl,omitempty"`
+	IssueState  string    `json:"issueState,omitempty"`
+	Author      *Person   `json:"author,omitempty"`
+	Reviewers   []Person  `json:"reviewers"`
+	Pipeline    string    `json:"pipeline,omitempty"` // green, yellow, red
+	PipelineURL string    `json:"pipelineUrl,omitempty"`
+	Behind      int       `json:"behind"`
+	Comments    int       `json:"comments"`
+	Release     []Release `json:"release"`
+	Badges      []Badge   `json:"badges"`
+	Action      *Action   `json:"action,omitempty"`
 	// Wait — сколько времени открыт MR, напр. "2д 5ч"; только для ждущих групп
 	Wait string `json:"wait,omitempty"`
 	// Muted — карточка заглушена; MutedUntil — до когда (RFC3339), пусто — навсегда.
@@ -165,7 +165,7 @@ func taskCard(task *domain.Task) Card {
 		IssueURL:   task.URL,
 		IssueState: task.State,
 		Reviewers:  []Person{},
-		Release:    []string{},
+		Release:    []Release{},
 		Badges:     []Badge{},
 	}
 }
@@ -231,7 +231,7 @@ func baseCard(mr *domain.MR) Card {
 		Reviewers: reviewers(mr),
 		Behind:    mr.Behind,
 		Comments:  mr.Comments,
-		Release:   append([]string{}, mr.ReleaseBranches...),
+		Release:   releases(mr),
 		Badges:    []Badge{},
 		Pipeline:  pipelineTone(mr.Pipeline),
 	}
@@ -290,6 +290,26 @@ func decisionName(d domain.ReviewDecision) string {
 	default:
 		return DecisionPending
 	}
+}
+
+// Release — релизная ветка на карточке смёрженного MR и сборка релиза с ним:
+// Pipeline — тон её статуса, пусто — сборки с этим MR ещё не было.
+type Release struct {
+	Branch   string `json:"branch"`
+	Pipeline string `json:"pipeline,omitempty"`
+	URL      string `json:"url,omitempty"`
+}
+
+func releases(mr *domain.MR) []Release {
+	out := make([]Release, 0, len(mr.Releases))
+	for _, r := range mr.Releases {
+		rel := Release{Branch: r.Branch}
+		if r.Build != nil {
+			rel.Pipeline, rel.URL = pipelineTone(r.Build), r.Build.WebURL
+		}
+		out = append(out, rel)
+	}
+	return out
 }
 
 func pipelineTone(p *domain.Pipeline) string {

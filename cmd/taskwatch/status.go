@@ -41,8 +41,12 @@ func mrColumns(mr *domain.MR, summary string) string {
 		pipeline = pipelineIcon(p.Outcome()) + " " + string(p.Status)
 	}
 	release := "-"
-	if len(mr.ReleaseBranches) > 0 {
-		release = strings.Join(mr.ReleaseBranches, ",")
+	if len(mr.Releases) > 0 {
+		branches := make([]string, 0, len(mr.Releases))
+		for _, r := range mr.Releases {
+			branches = append(branches, r.Branch)
+		}
+		release = strings.Join(branches, ",")
 	}
 	return fmt.Sprintf("!%d %s\t%d\t%d\t%s\t%s\t%s",
 		mr.IID, mr.State, mr.Approvals(), mr.Behind, pipeline, release, summary)

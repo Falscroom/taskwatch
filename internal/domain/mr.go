@@ -44,6 +44,14 @@ type User struct {
 	Name     string
 }
 
+// Release — релизная ветка с коммитом MR. Build — последняя сборка релиза, в
+// которой этот коммит уже есть; nil — такой сборки ещё не было или её не
+// удалось узнать.
+type Release struct {
+	Branch string
+	Build  *Pipeline
+}
+
 type Reviewer struct {
 	User  User
 	State ReviewerState
@@ -86,8 +94,8 @@ type MR struct {
 	Reviewers  []Reviewer
 	// Notes — последние комментарии; у смёрженного MR не загружаются.
 	Notes []Note
-	// ReleaseBranches — релизные ветки, в которые попал смёрженный MR.
-	ReleaseBranches []string
+	// Releases — релизные ветки, в которые попал смёрженный MR, и их сборки.
+	Releases []Release
 }
 
 func (mr *MR) Open() bool   { return mr.State == MROpened }

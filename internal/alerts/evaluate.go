@@ -20,18 +20,20 @@ type Transition struct {
 type Kind int
 
 const (
-	KindReview    Kind = iota // тебя позвали на ревью
-	KindPipeline              // сборка упала
-	KindConflict              // конфликт с целевой веткой
-	KindApproved              // апрувы собраны
-	KindComment               // новый комментарий
-	KindTaskState             // таска сменила статус
-	KindRelease               // MR попал в релизную ветку
+	KindReview        Kind = iota // тебя позвали на ревью
+	KindPipeline                  // сборка упала
+	KindConflict                  // конфликт с целевой веткой
+	KindApproved                  // апрувы собраны
+	KindComment                   // новый комментарий
+	KindTaskState                 // таска сменила статус
+	KindRelease                   // MR попал в релизную ветку
+	KindReleaseFailed             // сборка релиза с твоим MR упала
+	KindReleaseBuilt              // релиз с твоим MR собрался
 )
 
 // Loud — событие требует действия, уведомлению положен звук; остальные приходят тихо.
 func (k Kind) Loud() bool {
-	return k == KindReview || k == KindPipeline || k == KindConflict || k == KindApproved
+	return k == KindReview || k == KindPipeline || k == KindConflict || k == KindApproved || k == KindReleaseFailed
 }
 
 type Event struct {
@@ -175,14 +177,17 @@ func mrEvents(task *domain.Task, mr *domain.MR, p domain.Policy) []Event {
 		events = append(events, e)
 	}
 
-	for _, b := range mr.ReleaseBranches {
+	for _, rel := range mr.Releases {
 		events = append(events, Event{
-			Key:      fmt.Sprintf("release:%d:%s", mr.ID, b),
+			Key:      fmt.Sprintf("release:%d:%s", mr.ID, rel.Branch),
 			Kind:     KindRelease,
-			Title:    "Попало в " + b,
+			Title:    "Попало в " + rel.Branch,
 			Subtitle: about,
 			URL:      mr.WebURL,
 		})
+		if e, ok := releaseBuildEvent(mr, rel, about); ok {
+			events = append(events, e)
+		}
 	}
 	// Все события этого MR помечаем его id — по нему движок сверяет заглушения —
 	// и складываем в одну стопку.
@@ -191,6 +196,36 @@ func mrEvents(task *domain.Task, mr *domain.MR, p domain.Policy) []Event {
 		events[i].Thread = mrThread(mr)
 	}
 	return events
+}
+
+// releaseBuildEvent — итог сборки релиза, в которой уже есть твой MR: упала —
+// громко, собралась или дошла до ручного шага — тихо, пока идёт — молчим.
+// Ключ с номером и статусом пайплайна: новая сборка — новое уведомление.
+func releaseBuildEvent(mr *domain.MR, rel domain.Release, about string) (Event, bool) {
+	b := rel.Build
+	if b == nil {
+		return Event{}, false
+	}
+	e := Event{
+		Key:      fmt.Sprintf("release-build:%d:%d:%s", mr.ID, b.ID, b.Status),
+		Subtitle: about,
+		Body:     fmt.Sprintf("%s · пайплайн #%d", rel.Branch, b.ID),
+		URL:      b.WebURL,
+	}
+	switch {
+	case b.Status == "canceled":
+		e.Kind, e.Title = KindReleaseFailed, "Сборка релиза отменена"
+	case b.Failed():
+		e.Kind, e.Title = KindReleaseFailed, "Сборка релиза упала"
+	case b.Status == "success":
+		e.Kind, e.Title = KindReleaseBuilt, "Релиз собрался"
+	case b.Status == "manual":
+		e.Kind, e.Title = KindReleaseBuilt, "Релиз собрался"
+		e.Body += " · ждёт ручного шага"
+	default:
+		return Event{}, false
+	}
+	return e, true
 }
 
 // subject — с чем событие: таска, а если её нет — MR.
