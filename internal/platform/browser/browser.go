@@ -3,15 +3,16 @@ package browser
 
 import "os/exec"
 
-// Open открывает url в браузере. background — не выводить браузер вперёд:
-// фокус остаётся у taskwatch, и окно у иконки не прячется.
-func Open(url string, background bool) error {
-	return exec.Command("open", args(url, background)...).Run()
+// Open открывает ссылки в браузере одним вызовом: пачка приходит в браузер
+// разом и в том же порядке. background — просить macOS не выводить браузер
+// вперёд; Firefox по умолчанию всё равно выходит сам.
+func Open(urls []string, background bool) error {
+	return exec.Command("open", args(urls, background)...).Run()
 }
 
-func args(url string, background bool) []string {
+func args(urls []string, background bool) []string {
 	if background {
-		return []string{"-g", url} // -g: не активировать приложение
+		return append([]string{"-g"}, urls...) // -g: не активировать приложение
 	}
-	return []string{url}
+	return urls
 }

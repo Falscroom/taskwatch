@@ -7,6 +7,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,9 +29,12 @@ type api struct {
 	loginItem LoginItem
 }
 
-// Opener открывает ссылку в браузере пользователя; background — не выводить
-// браузер вперёд, чтобы фокус и окно остались у taskwatch.
-type Opener func(url string, background bool) error
+// Opener открывает ссылки в браузере пользователя одним вызовом; background —
+// просить не выводить браузер вперёд.
+type Opener func(urls []string, background bool) error
+
+// maxOpen — сколько ссылок открывается за раз: защита от лавины вкладок.
+const maxOpen = 20
 
 // LoginItem — запуск при входе в систему. Есть только у приложения в меню-баре.
 type LoginItem interface {
@@ -158,16 +162,30 @@ func (a *api) transition(w http.ResponseWriter, r *http.Request) {
 	respond(w, a.eng.Transition(r.Context(), in.IssueID), http.StatusBadGateway)
 }
 
-// POST /api/open — открыть ссылку в браузере: {url, background}, только http(s).
-// background — фоном, не выводя браузер вперёд (колесико или ⌘+клик).
+// POST /api/open — открыть в браузере {url} или пачку {urls}, только http(s).
+// background — пачка, собранная колесиком или ⌘+кликом: просить не выводить
+// браузер вперёд.
 func (a *api) open(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		URL        string `json:"url"`
-		Background bool   `json:"background"`
+		URL        string   `json:"url"`
+		URLs       []string `json:"urls"`
+		Background bool     `json:"background"`
 	}
-	if decode(r, &in) != nil || !strings.HasPrefix(in.URL, "https://") && !strings.HasPrefix(in.URL, "http://") {
-		writeError(w, http.StatusBadRequest, "http(s) url is required")
+	if decode(r, &in) != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	respond(w, a.openURL(in.URL, in.Background), http.StatusInternalServerError)
+	urls := in.URLs
+	if in.URL != "" {
+		urls = append([]string{in.URL}, urls...)
+	}
+	if len(urls) == 0 || len(urls) > maxOpen || slices.ContainsFunc(urls, notHTTP) {
+		writeError(w, http.StatusBadRequest, "1–20 http(s) urls are required")
+		return
+	}
+	respond(w, a.openURL(urls, in.Background), http.StatusInternalServerError)
+}
+
+func notHTTP(u string) bool {
+	return !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://")
 }

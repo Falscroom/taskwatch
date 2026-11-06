@@ -1,6 +1,7 @@
 // @ts-check
 // Вид: показать состояние и держать его свежим.
 import { api } from "./api.js";
+import { markQueued, pending } from "./batch.js";
 import { renderList } from "./cards.js";
 import { $, sleep, toast } from "./dom.js";
 import { ago, wakeLabel } from "./format.js";
@@ -19,6 +20,7 @@ export function render() {
   $("offhours").hidden = !v.sleepUntil;
   $("offhours").textContent = v.sleepUntil ? `Вне рабочего времени · опрос ${wakeLabel(v.sleepUntil)} · «Обновить» — опросить сейчас` : "";
   $("list").innerHTML = renderList(v, state.tab, state.open);
+  markQueued($("list"), pending);
 }
 
 // watchView держит вид свежим: long-poll /api/view?after=<version> отвечает,

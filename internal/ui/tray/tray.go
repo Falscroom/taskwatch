@@ -32,7 +32,7 @@ func Run(eng *engine.Engine, svc *settings.Service, notifier *Notifier, loginIte
 	var app *application.App
 	var systray *application.SystemTray
 	var win *popup
-	openURL := func(url string) error { return browser.Open(url, false) }
+	openURL := func(url string) error { return browser.Open([]string{url}, false) }
 
 	app = application.New(application.Options{
 		Name:        "taskwatch",

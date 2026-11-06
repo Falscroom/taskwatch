@@ -3,6 +3,7 @@
 // data-action="имя", а здесь — что это имя делает. Срабатывает ближайший
 // к месту клика элемент, поэтому кнопка на карточке не открывает саму карточку.
 import { api, openURL } from "./api.js";
+import { markQueued, pending } from "./batch.js";
 import { toast } from "./dom.js";
 import { closeMute, muteFor, openMute } from "./mute.js";
 import { clearSecrets, closeSettings, openSettings, pickBoards, testSettings, toggleLoginItem, useBoard } from "./settings.js";
@@ -80,37 +81,32 @@ const actions = {
 /** @param {Event} e @returns {HTMLElement | null} ближайший к месту клика элемент с data-action */
 const target = (e) => /** @type {HTMLElement | null} */ (/** @type {Element} */ (e.target).closest("[data-action]"));
 
-/**
- * openInBackground открывает ссылку элемента фоном: фокус остаётся здесь, окно
- * не прячется, можно открыть несколько MR подряд. Браузер вперёд не выходит,
- * поэтому элемент коротко подсвечивается.
- */
-function openInBackground(/** @type {HTMLElement} */ el) {
-  openURL(el.dataset.url, true);
-  el.classList.remove("opened");
-  void el.offsetWidth; // перезапуск анимации при повторном клике
-  el.classList.add("opened");
+/** later ставит ссылку элемента в пачку (повторно — убирает), см. batch.js. */
+function later(/** @type {HTMLElement} */ el) {
+  if (!el.dataset.url) return;
+  pending.toggle(el.dataset.url);
+  markQueued(document, pending);
 }
 
 /** listen вешает делегированные обработчики кликов на root. */
 export function listen(/** @type {Document | HTMLElement} */ root) {
   root.addEventListener("click", (e) => {
     const el = target(e);
-    // ⌘+клик — фоном, как в браузерах на Mac; на трекпаде вместо колесика.
+    // ⌘+клик — в пачку, как фоновая вкладка в браузерах на Mac; на трекпаде вместо колесика.
     if (/** @type {MouseEvent} */ (e).metaKey && el?.dataset.action === "open") {
-      openInBackground(el);
+      later(el);
       return;
     }
     const action = el && actions[el.dataset.action || ""];
     if (!action) return;
     Promise.resolve(action(el)).catch((err) => toast(err.message));
   });
-  // Колесико — тоже фоном. mouseup, а не auxclick: mouseup средней кнопкой
+  // Колесико — тоже в пачку. mouseup, а не auxclick: mouseup средней кнопкой
   // приходит в любом WebKit.
   root.addEventListener("mouseup", (e) => {
     const el = target(e);
     if (/** @type {MouseEvent} */ (e).button !== 1 || el?.dataset.action !== "open") return;
     e.preventDefault();
-    openInBackground(el);
+    later(el);
   });
 }

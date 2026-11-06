@@ -62,11 +62,13 @@ func newAPI(t *testing.T, cfg *config.Config, opts ...Option) *apiHarness {
 	h := &apiHarness{eng: eng, configPath: path, secrets: fakesecrets.New(nil)}
 	assets := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "asset:"+r.URL.Path) })
 	svc := settings.New(path, h.secrets)
-	open := func(u string, background bool) error {
+	// Каждый вызов — одна запись: ссылки пачки через запятую, фон — префиксом bg:.
+	open := func(urls []string, background bool) error {
+		call := strings.Join(urls, ",")
 		if background {
-			u = "bg:" + u
+			call = "bg:" + call
 		}
-		h.opened = append(h.opened, u)
+		h.opened = append(h.opened, call)
 		return nil
 	}
 	h.handler = Handler(eng, svc, open, assets, opts...)
@@ -235,12 +237,26 @@ func TestOpen(t *testing.T) {
 			t.Errorf("%q: status = %d", u, rec.Code)
 		}
 	}
-	// Клик колесиком: фоном, браузер не выходит вперёд.
-	if rec := h.do(t, http.MethodPost, "/api/open", map[string]any{"url": "https://gl/mr/2", "background": true}); rec.Code != 204 {
-		t.Errorf("background: status = %d", rec.Code)
+	// Пачка от колесика и ⌘+клика: одним вызовом, в том же порядке, фоном.
+	batch := map[string]any{"urls": []string{"https://gl/mr/2", "https://gl/mr/3"}, "background": true}
+	if rec := h.do(t, http.MethodPost, "/api/open", batch); rec.Code != 204 {
+		t.Errorf("batch: status = %d", rec.Code)
 	}
-	if strings.Join(h.opened, " ") != "https://gl/mr/1 http://yt/issue/1 bg:https://gl/mr/2" {
+	if strings.Join(h.opened, " ") != "https://gl/mr/1 http://yt/issue/1 bg:https://gl/mr/2,https://gl/mr/3" {
 		t.Errorf("opened = %v", h.opened)
+	}
+	// Одна плохая ссылка — отказ всей пачке; пустая и слишком большая пачка — тоже.
+	tooMany := make([]string, maxOpen+1)
+	for i := range tooMany {
+		tooMany[i] = "https://gl/mr/1"
+	}
+	for _, urls := range [][]string{{"https://gl/mr/1", "file:///etc/passwd"}, {}, tooMany} {
+		if rec := h.do(t, http.MethodPost, "/api/open", map[string]any{"urls": urls}); rec.Code != 400 {
+			t.Errorf("%d urls: status = %d", len(urls), rec.Code)
+		}
+	}
+	if len(h.opened) != 3 {
+		t.Errorf("rejected batches reached the browser: %v", h.opened)
 	}
 }
 

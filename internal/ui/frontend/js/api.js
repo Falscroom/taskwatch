@@ -21,12 +21,12 @@ export async function api(path, body) {
   return res.status === 204 ? null : res.json();
 }
 
-/**
- * openURL открывает ссылку в браузере пользователя (не в окне). background —
- * фоном: браузер не выходит вперёд, окно taskwatch остаётся открытым.
- * @param {string | undefined} url
- * @param {boolean} [background]
- */
-export function openURL(url, background = false) {
-  if (url) api("/api/open", { url, background }).catch((e) => toast(e.message));
+/** openURL открывает ссылку в браузере пользователя (не в окне). */
+export function openURL(/** @type {string | undefined} */ url) {
+  if (url) api("/api/open", { url }).catch((e) => toast(e.message));
+}
+
+/** openBatch открывает пачку ссылок одним вызовом, прося не выводить браузер вперёд. */
+export function openBatch(/** @type {string[]} */ urls) {
+  if (urls.length) api("/api/open", { urls, background: true }).catch((e) => toast(e.message));
 }
