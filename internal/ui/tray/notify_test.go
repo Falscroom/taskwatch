@@ -94,8 +94,10 @@ func TestPermitted(t *testing.T) {
 
 	allowed := false
 	n := &Notifier{check: func() (bool, error) { return allowed, nil }}
-	if n.permitted() || n.permitted() {
-		t.Fatal("notifications are off")
+	for range 2 {
+		if n.permitted() {
+			t.Fatal("notifications are off")
+		}
 	}
 	if c := strings.Count(buf.String(), "уведомления taskwatch выключены"); c != 1 {
 		t.Errorf("warnings = %d, want one:\n%s", c, buf.String())
