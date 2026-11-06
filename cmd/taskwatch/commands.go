@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -16,6 +15,7 @@ import (
 	"taskwatch/internal/app"
 	"taskwatch/internal/config"
 	"taskwatch/internal/engine"
+	"taskwatch/internal/platform/browser"
 	"taskwatch/internal/platform/loginitem"
 	"taskwatch/internal/settings"
 	"taskwatch/internal/state"
@@ -113,8 +113,7 @@ func runWeb(e env) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go e.eng.Run(ctx)
-	openURL := func(url string) error { return exec.Command("open", url).Run() }
-	handler := httpapi.Handler(e.eng, e.settings, openURL, http.FileServerFS(frontend.FS()))
+	handler := httpapi.Handler(e.eng, e.settings, browser.Open, http.FileServerFS(frontend.FS()))
 	log.Printf("http://%s", e.addr)
 	return httpapi.Serve(ctx, e.addr, handler)
 }

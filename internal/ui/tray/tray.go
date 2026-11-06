@@ -18,6 +18,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"taskwatch/internal/engine"
+	"taskwatch/internal/platform/browser"
 	"taskwatch/internal/settings"
 	"taskwatch/internal/ui/frontend"
 	"taskwatch/internal/ui/httpapi"
@@ -31,13 +32,13 @@ func Run(eng *engine.Engine, svc *settings.Service, notifier *Notifier, loginIte
 	var app *application.App
 	var systray *application.SystemTray
 	var win *popup
-	openURL := func(url string) error { return app.Browser.OpenURL(url) }
+	openURL := func(url string) error { return browser.Open(url, false) }
 
 	app = application.New(application.Options{
 		Name:        "taskwatch",
 		Description: "Таски спринта, MR и ревью",
 		Assets: application.AssetOptions{
-			Handler:        httpapi.Handler(eng, svc, openURL, application.AssetFileServerFS(frontend.FS()), httpapi.WithLoginItem(loginItem)),
+			Handler:        httpapi.Handler(eng, svc, browser.Open, application.AssetFileServerFS(frontend.FS()), httpapi.WithLoginItem(loginItem)),
 			DisableLogging: true,
 		},
 		Mac: application.MacOptions{

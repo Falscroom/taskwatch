@@ -10,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -22,6 +21,7 @@ import (
 	"taskwatch/internal/engine"
 	"taskwatch/internal/integrations/gitlab"
 	"taskwatch/internal/integrations/youtrack"
+	"taskwatch/internal/platform/browser"
 	"taskwatch/internal/settings"
 	"taskwatch/internal/state"
 	"taskwatch/internal/testutil/fakeapi"
@@ -91,9 +91,8 @@ func run(addr string, inTray bool) error {
 	defer stop()
 	go eng.Run(ctx)
 
-	openURL := func(url string) error { return exec.Command("open", url).Run() }
 	log.Printf("демо: http://%s (поддельные GitLab и YouTrack на %s)", addr, srv.URL)
-	return httpapi.Serve(ctx, addr, httpapi.Handler(eng, svc, openURL, http.FileServerFS(frontend.FS())))
+	return httpapi.Serve(ctx, addr, httpapi.Handler(eng, svc, browser.Open, http.FileServerFS(frontend.FS())))
 }
 
 // seed — по карточке на каждую группу окна.

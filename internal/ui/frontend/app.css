@@ -90,6 +90,9 @@ h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
   cursor: pointer;
 }
 .card:hover { background: var(--card-hover); }
+/* Открыто колесиком фоном: браузер вперёд не выходит, поэтому — вспышка. */
+.opened { animation: opened 0.7s ease-out; }
+@keyframes opened { from { box-shadow: 0 0 0 2px var(--teal); } to { box-shadow: 0 0 0 2px transparent; } }
 .card::before {
   content: "";
   position: absolute;

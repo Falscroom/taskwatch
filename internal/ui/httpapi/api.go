@@ -24,9 +24,13 @@ var longPoll = 25 * time.Second
 type api struct {
 	eng       *engine.Engine
 	settings  *settings.Service
-	openURL   func(string) error
+	openURL   Opener
 	loginItem LoginItem
 }
+
+// Opener открывает ссылку в браузере пользователя; background — не выводить
+// браузер вперёд, чтобы фокус и окно остались у taskwatch.
+type Opener func(url string, background bool) error
 
 // LoginItem — запуск при входе в систему. Есть только у приложения в меню-баре.
 type LoginItem interface {
@@ -43,7 +47,7 @@ func WithLoginItem(li LoginItem) Option { return func(a *api) { a.loginItem = li
 
 // Handler — API под /api/, на остальных путях — assets (файлы окна).
 // openURL открывает ссылку в браузере пользователя.
-func Handler(eng *engine.Engine, svc *settings.Service, openURL func(string) error, assets http.Handler, opts ...Option) http.Handler {
+func Handler(eng *engine.Engine, svc *settings.Service, openURL Opener, assets http.Handler, opts ...Option) http.Handler {
 	a := &api{eng: eng, settings: svc, openURL: openURL}
 	for _, o := range opts {
 		o(a)
@@ -154,14 +158,16 @@ func (a *api) transition(w http.ResponseWriter, r *http.Request) {
 	respond(w, a.eng.Transition(r.Context(), in.IssueID), http.StatusBadGateway)
 }
 
-// POST /api/open — открыть ссылку в браузере: {url}, только http(s).
+// POST /api/open — открыть ссылку в браузере: {url, background}, только http(s).
+// background — фоном, не выводя браузер вперёд (колесико или ⌘+клик).
 func (a *api) open(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		URL string `json:"url"`
+		URL        string `json:"url"`
+		Background bool   `json:"background"`
 	}
 	if decode(r, &in) != nil || !strings.HasPrefix(in.URL, "https://") && !strings.HasPrefix(in.URL, "http://") {
 		writeError(w, http.StatusBadRequest, "http(s) url is required")
 		return
 	}
-	respond(w, a.openURL(in.URL), http.StatusInternalServerError)
+	respond(w, a.openURL(in.URL, in.Background), http.StatusInternalServerError)
 }

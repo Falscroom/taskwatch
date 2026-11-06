@@ -62,7 +62,14 @@ func newAPI(t *testing.T, cfg *config.Config, opts ...Option) *apiHarness {
 	h := &apiHarness{eng: eng, configPath: path, secrets: fakesecrets.New(nil)}
 	assets := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "asset:"+r.URL.Path) })
 	svc := settings.New(path, h.secrets)
-	h.handler = Handler(eng, svc, func(u string) error { h.opened = append(h.opened, u); return nil }, assets, opts...)
+	open := func(u string, background bool) error {
+		if background {
+			u = "bg:" + u
+		}
+		h.opened = append(h.opened, u)
+		return nil
+	}
+	h.handler = Handler(eng, svc, open, assets, opts...)
 	return h
 }
 
@@ -228,7 +235,11 @@ func TestOpen(t *testing.T) {
 			t.Errorf("%q: status = %d", u, rec.Code)
 		}
 	}
-	if strings.Join(h.opened, " ") != "https://gl/mr/1 http://yt/issue/1" {
+	// Клик колесиком: фоном, браузер не выходит вперёд.
+	if rec := h.do(t, http.MethodPost, "/api/open", map[string]any{"url": "https://gl/mr/2", "background": true}); rec.Code != 204 {
+		t.Errorf("background: status = %d", rec.Code)
+	}
+	if strings.Join(h.opened, " ") != "https://gl/mr/1 http://yt/issue/1 bg:https://gl/mr/2" {
 		t.Errorf("opened = %v", h.opened)
 	}
 }

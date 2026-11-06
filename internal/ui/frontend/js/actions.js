@@ -77,12 +77,40 @@ const actions = {
   "secrets-clear": (el) => clearSecrets(/** @type {HTMLButtonElement} */ (el)),
 };
 
-/** listen вешает делегированный обработчик кликов на root. */
+/** @param {Event} e @returns {HTMLElement | null} ближайший к месту клика элемент с data-action */
+const target = (e) => /** @type {HTMLElement | null} */ (/** @type {Element} */ (e.target).closest("[data-action]"));
+
+/**
+ * openInBackground открывает ссылку элемента фоном: фокус остаётся здесь, окно
+ * не прячется, можно открыть несколько MR подряд. Браузер вперёд не выходит,
+ * поэтому элемент коротко подсвечивается.
+ */
+function openInBackground(/** @type {HTMLElement} */ el) {
+  openURL(el.dataset.url, true);
+  el.classList.remove("opened");
+  void el.offsetWidth; // перезапуск анимации при повторном клике
+  el.classList.add("opened");
+}
+
+/** listen вешает делегированные обработчики кликов на root. */
 export function listen(/** @type {Document | HTMLElement} */ root) {
   root.addEventListener("click", (e) => {
-    const el = /** @type {HTMLElement | null} */ (/** @type {Element} */ (e.target).closest("[data-action]"));
+    const el = target(e);
+    // ⌘+клик — фоном, как в браузерах на Mac; на трекпаде вместо колесика.
+    if (/** @type {MouseEvent} */ (e).metaKey && el?.dataset.action === "open") {
+      openInBackground(el);
+      return;
+    }
     const action = el && actions[el.dataset.action || ""];
     if (!action) return;
     Promise.resolve(action(el)).catch((err) => toast(err.message));
+  });
+  // Колесико — тоже фоном. mouseup, а не auxclick: mouseup средней кнопкой
+  // приходит в любом WebKit.
+  root.addEventListener("mouseup", (e) => {
+    const el = target(e);
+    if (/** @type {MouseEvent} */ (e).button !== 1 || el?.dataset.action !== "open") return;
+    e.preventDefault();
+    openInBackground(el);
   });
 }

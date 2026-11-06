@@ -21,7 +21,12 @@ export async function api(path, body) {
   return res.status === 204 ? null : res.json();
 }
 
-/** openURL открывает ссылку в браузере пользователя (не в окне). */
-export function openURL(url) {
-  if (url) api("/api/open", { url }).catch((e) => toast(e.message));
+/**
+ * openURL открывает ссылку в браузере пользователя (не в окне). background —
+ * фоном: браузер не выходит вперёд, окно taskwatch остаётся открытым.
+ * @param {string | undefined} url
+ * @param {boolean} [background]
+ */
+export function openURL(url, background = false) {
+  if (url) api("/api/open", { url, background }).catch((e) => toast(e.message));
 }
