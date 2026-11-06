@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"taskwatch/internal/domain"
@@ -10,6 +11,10 @@ import (
 // Notifier показывает уведомление о событии. Key события служит идентификатором
 // уведомления: macOS заменяет уведомление с тем же ключом, а не дублирует.
 type Notifier func(Event) error
+
+// ErrRetryLater — уведомление сейчас не показать, но событие не потеряно:
+// Dispatcher его не помечает и не пишет в лог, оно придёт в следующий проход.
+var ErrRetryLater = errors.New("notification postponed")
 
 // Transitioner применяет к таске команду YouTrack.
 type Transitioner func(ctx context.Context, issueID, command string) error
@@ -45,7 +50,9 @@ func (d Dispatcher) Dispatch(ctx context.Context, events []Event) {
 		default:
 			d.transition(ctx, &ev)
 			if err := d.Notify(ev); err != nil {
-				log.Printf("notify %s: %v", ev.Key, err)
+				if !errors.Is(err, ErrRetryLater) {
+					log.Printf("notify %s: %v", ev.Key, err)
+				}
 				continue // не помечаем — повторится на следующем тике
 			}
 			d.Ledger.Mark(ev.Key)

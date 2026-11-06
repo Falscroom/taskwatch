@@ -73,12 +73,14 @@ status: build
 # запуске приложение само включает запуск при входе.
 install: app
 	-@osascript -e 'quit app "taskwatch"' 2>/dev/null
+	@for i in $$(seq 50); do pgrep -qf /Applications/taskwatch.app/ || break; sleep 0.1; done
 	rm -rf /Applications/taskwatch.app
 	cp -R $(APP) /Applications/
 	open /Applications/taskwatch.app
 
 uninstall:
 	-@osascript -e 'quit app "taskwatch"' 2>/dev/null
+	@for i in $$(seq 50); do pgrep -qf /Applications/taskwatch.app/ || break; sleep 0.1; done
 	rm -rf /Applications/taskwatch.app
 
 # dmg — образ для раздачи: taskwatch.app, ярлык «Программы» для перетаскивания

@@ -5,7 +5,10 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
@@ -85,25 +88,62 @@ func TestNotifierFallsBackOutsideBundle(t *testing.T) {
 	}
 }
 
-// Про выключенные уведомления — одна строка в логе, когда уведомление и правда
-// не показано; разрешили позже — снова показываем.
-func TestPermitted(t *testing.T) {
-	var buf strings.Builder
+// Сразу после запуска macOS отвечает «не разрешено» и только потом — как есть:
+// событие откладывается, а когда разрешение приходит, опрос проходит заново.
+func TestPermittedWaitsForPermission(t *testing.T) {
+	defer func(w, p time.Duration) { permissionWait, permissionPoll = w, p }(permissionWait, permissionPoll)
+	permissionWait, permissionPoll = time.Second, time.Millisecond
+
+	var asks atomic.Int32
+	refreshed := make(chan struct{}, 1)
+	n := &Notifier{
+		check:     func() (bool, error) { return asks.Add(1) > 3, nil },
+		onAllowed: func() { refreshed <- struct{}{} },
+	}
+	if n.permitted() {
+		t.Fatal("the first answer is «not allowed»")
+	}
+	select {
+	case <-refreshed:
+	case <-time.After(time.Second):
+		t.Fatal("no refresh after the permission arrived")
+	}
+	if !n.permitted() {
+		t.Error("permission arrived — must show now")
+	}
+}
+
+// Разрешения так и не дали — одна строка в логе, без повторов.
+func TestPermittedTurnedOff(t *testing.T) {
+	defer func(w, p time.Duration) { permissionWait, permissionPoll = w, p }(permissionWait, permissionPoll)
+	permissionWait, permissionPoll = 20*time.Millisecond, time.Millisecond
+	var buf syncBuffer
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
 
-	allowed := false
-	n := &Notifier{check: func() (bool, error) { return allowed, nil }}
+	n := &Notifier{check: func() (bool, error) { return false, nil }}
 	for range 2 {
 		if n.permitted() {
 			t.Fatal("notifications are off")
+		}
+		for n.waiting.Load() {
+			time.Sleep(time.Millisecond)
 		}
 	}
 	if c := strings.Count(buf.String(), "уведомления taskwatch выключены"); c != 1 {
 		t.Errorf("warnings = %d, want one:\n%s", c, buf.String())
 	}
-	allowed = true
-	if !n.permitted() {
-		t.Error("allowed later in System Settings — must show again")
-	}
 }
+
+// syncBuffer — лог из фоновой горутины без гонок.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }

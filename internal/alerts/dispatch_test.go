@@ -127,3 +127,17 @@ func TestDispatchAutoTransition(t *testing.T) {
 		t.Errorf("unexpected transitions: %v", calls)
 	}
 }
+
+// Отложенное уведомление не помечается и не пишется в лог как ошибка.
+func TestDispatchRetryLater(t *testing.T) {
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	defer log.SetOutput(io.Discard)
+
+	l := ledger{}
+	postpone := func(Event) error { return ErrRetryLater }
+	Dispatcher{Ledger: l, Notify: postpone}.Dispatch(context.Background(), events[:1])
+	if l.Seen("task") || buf.Len() != 0 {
+		t.Errorf("ledger = %v, log = %q", l, buf.String())
+	}
+}

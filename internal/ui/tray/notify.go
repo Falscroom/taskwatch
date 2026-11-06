@@ -33,8 +33,12 @@ type Notifier struct {
 	native   atomic.Bool // Центр уведомлений запущен — мы внутри бандла
 	allowed  atomic.Bool // пользователь разрешил уведомления
 	warned   atomic.Bool // про выключенные уведомления уже написали в лог
+	waiting  atomic.Bool // в фоне ждём, пока macOS разрешит уведомления
 	// check — разрешены ли уведомления в настройках macOS.
 	check func() (bool, error)
+	// onAllowed — разрешение пришло: движок проходит опрос заново, и
+	// отложенные уведомления приходят сразу. Задаётся в listen до старта опроса.
+	onAllowed func()
 
 	mu         sync.Mutex
 	categories map[string]bool // уже зарегистрированные наборы кнопок
@@ -51,9 +55,9 @@ func (n *Notifier) Notify(ev alerts.Event) error {
 		return n.fallback(ev)
 	}
 	if !n.permitted() {
-		// Уведомления выключены в настройках macOS — это выбор пользователя:
-		// не обходим его через osascript и не копим событие на повтор.
-		return nil
+		// Не обходим запрет через osascript: событие откладываем, и оно придёт,
+		// когда macOS разрешит уведомления.
+		return alerts.ErrRetryLater
 	}
 	opts := options(ev)
 	if opts.CategoryID == "" {
@@ -65,10 +69,15 @@ func (n *Notifier) Notify(ev alerts.Event) error {
 	return n.svc.SendNotificationWithActions(opts)
 }
 
+// Сколько ждать разрешения уведомлений и как часто спрашивать macOS.
+var (
+	permissionWait = 10 * time.Minute
+	permissionPoll = 3 * time.Second
+)
+
 // permitted — разрешены ли уведомления. Разрешение могут выдать позже в
-// настройках macOS, поэтому отказ перепроверяем при каждом событии. Про
-// выключенные уведомления пишем в лог здесь, когда уведомление и правда не
-// показано, — один раз.
+// настройках macOS, поэтому отказ перепроверяем при каждом событии, а пока
+// его нет — ждём в фоне (waitForPermission).
 func (n *Notifier) permitted() bool {
 	if n.allowed.Load() {
 		return true
@@ -77,11 +86,40 @@ func (n *Notifier) permitted() bool {
 	if err != nil {
 		log.Printf("уведомления: %v", err)
 	}
-	n.allowed.Store(ok)
-	if !ok && !n.warned.Swap(true) {
-		log.Printf("уведомление не показано: уведомления taskwatch выключены — включить: Системные настройки → Уведомления → taskwatch")
+	if ok {
+		n.allowed.Store(true)
+		return true
 	}
-	return ok
+	n.waitForPermission()
+	return false
+}
+
+// waitForPermission — в фоне ждать, пока macOS разрешит уведомления. Сразу после
+// запуска она отвечает «не разрешено» даже при включённых уведомлениях и лишь
+// потом начинает отвечать как есть. Дождались — просим движок пройти опрос
+// заново: отложенные уведомления придут сразу, а не через poll_interval. Не
+// дождались за permissionWait — уведомления и правда выключены: пишем об этом
+// в лог один раз.
+func (n *Notifier) waitForPermission() {
+	if !n.waiting.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer n.waiting.Store(false)
+		for deadline := time.Now().Add(permissionWait); time.Now().Before(deadline); time.Sleep(permissionPoll) {
+			if ok, _ := n.check(); ok {
+				n.allowed.Store(true)
+				log.Printf("уведомления разрешены — показываю отложенные")
+				if n.onAllowed != nil {
+					n.onAllowed()
+				}
+				return
+			}
+		}
+		if !n.warned.Swap(true) {
+			log.Printf("уведомления taskwatch выключены — включить: Системные настройки → Уведомления → taskwatch")
+		}
+	}()
 }
 
 // register регистрирует набор кнопок один раз: у перевода кнопка зависит от статуса.
@@ -183,6 +221,7 @@ func respond(r notifications.NotificationResponse, do responder) {
 // listen отвечает на клики по уведомлениям: открыть, заглушить на час,
 // перевести таску — с ответным уведомлением о том, как прошёл перевод.
 func (n *Notifier) listen(eng *engine.Engine, openURL func(string) error) {
+	n.onAllowed = eng.Refresh
 	n.svc.OnNotificationResponse(func(res notifications.NotificationResult) {
 		if res.Error != nil {
 			log.Printf("уведомление: %v", res.Error)
