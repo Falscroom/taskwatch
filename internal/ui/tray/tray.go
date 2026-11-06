@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -29,6 +30,7 @@ import (
 func Run(eng *engine.Engine, svc *settings.Service, notifier *Notifier, loginItem httpapi.LoginItem) error {
 	var app *application.App
 	var systray *application.SystemTray
+	var win *popup
 	openURL := func(url string) error { return app.Browser.OpenURL(url) }
 
 	app = application.New(application.Options{
@@ -46,33 +48,10 @@ func Run(eng *engine.Engine, svc *settings.Service, notifier *Notifier, loginIte
 		// а показывает окно уже запущенного.
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID:               instanceID(),
-			OnSecondInstanceLaunch: func(application.SecondInstanceData) { systray.ShowWindow() },
+			OnSecondInstanceLaunch: func(application.SecondInstanceData) { win.reveal() },
 		},
 	})
 	notifier.listen(eng, openURL)
-
-	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:            "taskwatch",
-		Width:           520,
-		Height:          640,
-		Frameless:       true,
-		AlwaysOnTop:     true,
-		Hidden:          true,
-		DisableResize:   true,
-		HideOnEscape:    true,
-		HideOnFocusLost: true,
-		BackgroundType:  application.BackgroundTypeTransparent,
-		Mac: application.MacWindow{
-			Backdrop: application.MacBackdropTransparent,
-			// Совпадает с border-radius панели в CSS: иначе AppKit скругляет окно
-			// на свои ~10pt и в углах виден зазор между двумя радиусами.
-			CornerRadius: 20,
-		},
-	})
-	window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
-		window.Hide()
-		e.Cancel()
-	})
 
 	menu := app.NewMenu()
 	menu.Add("Обновить").OnClick(func(*application.Context) { eng.Refresh() })
@@ -84,7 +63,15 @@ func Run(eng *engine.Engine, svc *settings.Service, notifier *Notifier, loginIte
 	systray.SetTemplateIcon(trayIcon())
 	systray.SetTooltip("taskwatch")
 	systray.SetMenu(menu)
-	systray.AttachWindow(window).WindowOffset(5)
+	systray.WindowOffset(5)
+	// Окно создаётся по первому клику и закрывается, когда долго скрыто (popup).
+	win = &popup{
+		open:   func() (window, *atomic.Bool) { return newWindow(app) },
+		attach: func(w window) { systray.AttachWindow(w.(application.Window)) },
+		toggle: systray.ToggleWindow,
+		show:   systray.ShowWindow,
+	}
+	systray.OnClick(win.click)
 
 	// Цифра на иконке — сколько карточек ждут твоего действия.
 	eng.Subscribe(func() { systray.SetLabel(badge(eng)) })
@@ -92,6 +79,7 @@ func Run(eng *engine.Engine, svc *settings.Service, notifier *Notifier, loginIte
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startPolling(ctx, eng, app)
+	go win.watch(ctx)
 	return app.Run()
 }
 
