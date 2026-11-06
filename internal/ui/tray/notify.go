@@ -33,13 +33,16 @@ type Notifier struct {
 	svc      *notifications.NotificationService
 	native   atomic.Bool // Центр уведомлений запущен — мы внутри бандла
 	warned   atomic.Bool // про выключенные уведомления уже написали в лог
+	// check — разрешены ли уведомления в Системных настройках macOS.
+	check func() (bool, error)
 
 	mu         sync.Mutex
 	categories map[string]bool // уже зарегистрированные наборы кнопок
 }
 
 func NewNotifier(fallback alerts.Notifier) *Notifier {
-	return &Notifier{fallback: fallback, svc: notifications.New(), categories: map[string]bool{}}
+	svc := notifications.New()
+	return &Notifier{fallback: fallback, svc: svc, check: svc.CheckNotificationAuthorization, categories: map[string]bool{}}
 }
 
 // Notify — alerts.Notifier.
@@ -47,7 +50,24 @@ func (n *Notifier) Notify(ev alerts.Event) error {
 	if !n.native.Load() {
 		return n.fallback(ev)
 	}
+	n.warnIfOff()
 	return n.refused(n.send(ev))
+}
+
+// warnIfOff пишет в лог, если уведомления taskwatch выключены в Системных
+// настройках, — один раз, пока их снова не включат. Отправку не останавливает:
+// выключенное уведомление macOS принимает молча и не показывает, это выбор
+// пользователя. Без этой строки причина тишины не видна нигде.
+func (n *Notifier) warnIfOff() {
+	ok, err := n.check()
+	switch {
+	case err != nil:
+		log.Printf("уведомления: %v", err)
+	case ok:
+		n.warned.Store(false)
+	case !n.warned.Swap(true):
+		log.Printf("уведомления taskwatch выключены — включить: Системные настройки → Уведомления → taskwatch")
+	}
 }
 
 // send — уведомление в Центр уведомлений, с кнопками, если они есть.
@@ -62,23 +82,14 @@ func (n *Notifier) send(ev alerts.Event) error {
 	return n.svc.SendNotificationWithActions(opts)
 }
 
-// refused разбирает ответ на отправку. Разрешение заранее не спрашиваем: статус
-// уведомлений у такого приложения бывает не «разрешено» даже тогда, когда они
-// показываются, — верим только отказу в самой отправке. Отказали — уведомления
-// выключены: не обходим запрет через osascript, событие откладываем до
-// следующего опроса и пишем об этом в лог один раз.
+// refused разбирает ответ на отправку. Если macOS отказала в самой отправке
+// («not allowed»), не обходим запрет через osascript, а откладываем событие до
+// следующего опроса.
 func (n *Notifier) refused(err error) error {
-	if err == nil {
-		n.warned.Store(false)
-		return nil
+	if err != nil && notAllowed(err) {
+		return alerts.ErrRetryLater
 	}
-	if !notAllowed(err) {
-		return err
-	}
-	if !n.warned.Swap(true) {
-		log.Printf("уведомления taskwatch выключены — включить: Системные настройки → Уведомления → taskwatch")
-	}
-	return alerts.ErrRetryLater
+	return err
 }
 
 // notAllowed — macOS отклонила уведомление: оно выключено в настройках.
@@ -113,9 +124,8 @@ func (n *Notifier) start(ctx context.Context, opts application.ServiceOptions) {
 		return
 	}
 	n.native.Store(true)
-	// Спрашиваем разрешение, чтобы macOS показала запрос при первом запуске.
-	// Ответу не верим — он бывает «не разрешено» и при включённых
-	// уведомлениях; итог решает сама отправка (refused).
+	// Спрашиваем разрешение, чтобы macOS показала запрос при первом запуске;
+	// включены ли уведомления, проверяет warnIfOff перед каждой отправкой.
 	go func() { _, _ = n.svc.RequestNotificationAuthorization() }()
 }
 

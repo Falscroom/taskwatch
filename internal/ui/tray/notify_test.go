@@ -85,29 +85,37 @@ func TestNotifierFallsBackOutsideBundle(t *testing.T) {
 	}
 }
 
-// Отказ в отправке — уведомления выключены: событие откладывается, в логе одна
-// строка; другая ошибка уходит наверх как есть, а успех снова взводит
-// предупреждение на случай, если уведомления выключат позже.
-func TestRefused(t *testing.T) {
+// Выключенные в Системных настройках уведомления — одна строка в логе, пока их
+// снова не включат; включили и выключили опять — снова строка.
+func TestWarnIfOff(t *testing.T) {
 	var buf strings.Builder
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
 
-	n := &Notifier{}
-	off := errors.New("Error: Notifications are not allowed for this application")
-	for range 2 {
-		if err := n.refused(off); !errors.Is(err, alerts.ErrRetryLater) {
-			t.Fatalf("refused send = %v, want ErrRetryLater", err)
-		}
+	on := false
+	n := &Notifier{check: func() (bool, error) { return on, nil }}
+	n.warnIfOff()
+	n.warnIfOff()
+	on = true
+	n.warnIfOff()
+	on = false
+	n.warnIfOff()
+	if c := strings.Count(buf.String(), "уведомления taskwatch выключены"); c != 2 {
+		t.Errorf("warnings = %d, want two:\n%s", c, buf.String())
 	}
-	if c := strings.Count(buf.String(), "уведомления taskwatch выключены"); c != 1 {
-		t.Errorf("warnings = %d, want one:\n%s", c, buf.String())
+}
+
+// Отказ в самой отправке — событие откладывается; другие ошибки — как есть.
+func TestRefused(t *testing.T) {
+	n := &Notifier{}
+	if err := n.refused(errors.New("Error: Notifications are not allowed for this application")); !errors.Is(err, alerts.ErrRetryLater) {
+		t.Errorf("refused send = %v, want ErrRetryLater", err)
 	}
 	other := errors.New("sending notification timed out")
 	if err := n.refused(other); !errors.Is(err, other) {
 		t.Errorf("other error = %v", err)
 	}
-	if err := n.refused(nil); err != nil || n.warned.Load() {
-		t.Errorf("success: err = %v, warned = %v", err, n.warned.Load())
+	if err := n.refused(nil); err != nil {
+		t.Errorf("success = %v", err)
 	}
 }
