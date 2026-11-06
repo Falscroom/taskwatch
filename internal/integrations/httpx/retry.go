@@ -21,6 +21,10 @@ type StatusError struct {
 
 func (e *StatusError) Error() string { return e.Message }
 
+// StatusCode — HTTP-код ответа: по нему движок, не зная про httpx, отличает
+// «токен не подходит» от остальных ошибок.
+func (e *StatusError) StatusCode() int { return e.Code }
+
 // retry выполняет attempt, пока ошибка ретраебельная и не кончились паузы.
 func retry(ctx context.Context, delays []time.Duration, attempt func() error) error {
 	err := attempt()

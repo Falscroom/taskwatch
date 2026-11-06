@@ -287,12 +287,12 @@ func TestApproverNames(t *testing.T) {
 }
 
 func TestKindLoud(t *testing.T) {
-	for _, k := range []Kind{KindReview, KindPipeline, KindConflict, KindApproved} {
+	for _, k := range []Kind{KindReview, KindPipeline, KindConflict, KindApproved, KindReleaseFailed, KindChangesRequested, KindPollFailed} {
 		if !k.Loud() {
 			t.Errorf("kind %d must be loud", k)
 		}
 	}
-	for _, k := range []Kind{KindComment, KindTaskState, KindRelease} {
+	for _, k := range []Kind{KindComment, KindTaskState, KindRelease, KindReleaseBuilt, KindThreads, KindPollRecovered} {
 		if k.Loud() {
 			t.Errorf("kind %d must be quiet", k)
 		}
@@ -353,5 +353,38 @@ func TestReleaseBuildEvents(t *testing.T) {
 	}
 	if !KindReleaseFailed.Loud() || KindReleaseBuilt.Loud() {
 		t.Error("a failed release build is loud, a successful one is quiet")
+	}
+}
+
+// Запрошенные изменения — по уведомлению на ревьюера; нерешённые треды — одно на
+// MR. Только у открытого MR.
+func TestChangesAndThreadsEvents(t *testing.T) {
+	mr := openMR(10)
+	mr.DiscussionsResolved = false
+	mr.Reviewers = []domain.Reviewer{
+		{User: domain.User{Username: "anna", Name: "Анна Смирнова"}, State: domain.ReviewerRequestedChanges},
+		{User: domain.User{Username: "oleg"}, State: domain.ReviewerRequestedChanges},
+		{User: domain.User{Username: "eve"}, State: domain.ReviewerApproved},
+	}
+	got := byKey(t, Evaluate(&domain.Snapshot{Tasks: []*domain.Task{task("ABC-1", "In Progress", mr)}}, testPolicy()))
+	for key, body := range map[string]string{"changes:10:anna": "Анна Смирнова", "changes:10:oleg": "oleg"} {
+		e, ok := got[key]
+		if !ok || e.Title != "Запрошены изменения" || e.Body != body || e.Kind != KindChangesRequested ||
+			e.Subtitle != "ABC-1 · Summary ABC-1" || e.MRID != 10 || e.URL != "https://gl/mr" {
+			t.Errorf("%s = %+v", key, e)
+		}
+	}
+	if _, ok := got["changes:10:eve"]; ok {
+		t.Error("an approval is not a change request")
+	}
+	if e := got["threads:10"]; e.Title != "Нерешённые треды" || e.Kind != KindThreads || e.MRID != 10 {
+		t.Errorf("threads = %+v", e)
+	}
+
+	mr.State = domain.MRMerged
+	for key := range byKey(t, Evaluate(&domain.Snapshot{Orphans: []*domain.MR{mr}}, testPolicy())) {
+		if strings.HasPrefix(key, "changes:") || strings.HasPrefix(key, "threads:") {
+			t.Errorf("merged MR: %s", key)
+		}
 	}
 }

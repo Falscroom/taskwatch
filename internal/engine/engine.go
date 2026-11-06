@@ -60,7 +60,8 @@ type Engine struct {
 	nextSub int
 	version atomic.Uint64 // растёт с каждым publish
 
-	guard glitchGuard // только из Tick
+	guard  glitchGuard // только из Tick
+	health health      // только из Tick
 }
 
 func New(cfg *config.Config, store *state.Store, notify alerts.Notifier, build Factory) *Engine {
@@ -203,8 +204,14 @@ func (e *Engine) Tick(ctx context.Context) error {
 	snap, err := cur.deps.Collector.Collect(ctx)
 	if err != nil {
 		e.fail(err)
+		ev, retry := e.health.failed(err)
+		if retry {
+			time.AfterFunc(pollRetry, e.Refresh)
+		}
+		e.notifyHealth(ev)
 		return err
 	}
+	e.notifyHealth(e.health.ok())
 	if !e.guard.accept(e.baseline(), snap) {
 		e.Refresh() // перепроверить сразу, прошлый вид пока остаётся
 		return nil
@@ -217,6 +224,17 @@ func (e *Engine) Tick(ctx context.Context) error {
 
 	e.deliver(ctx, cur, snap)
 	return e.store.Save()
+}
+
+// notifyHealth — уведомление о поломке или восстановлении опроса, мимо журнала
+// событий: это не событие из GitLab, а состояние самого taskwatch.
+func (e *Engine) notifyHealth(ev *alerts.Event) {
+	if ev == nil {
+		return
+	}
+	if err := e.notify(*ev); err != nil && !errors.Is(err, alerts.ErrRetryLater) {
+		log.Printf("notify %s: %v", ev.Key, err)
+	}
 }
 
 // fail запоминает ошибку тика; прошлый снапшот остаётся на экране.

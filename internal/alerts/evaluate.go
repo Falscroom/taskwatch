@@ -20,20 +20,28 @@ type Transition struct {
 type Kind int
 
 const (
-	KindReview        Kind = iota // тебя позвали на ревью
-	KindPipeline                  // сборка упала
-	KindConflict                  // конфликт с целевой веткой
-	KindApproved                  // апрувы собраны
-	KindComment                   // новый комментарий
-	KindTaskState                 // таска сменила статус
-	KindRelease                   // MR попал в релизную ветку
-	KindReleaseFailed             // сборка релиза с твоим MR упала
-	KindReleaseBuilt              // релиз с твоим MR собрался
+	KindReview           Kind = iota // тебя позвали на ревью
+	KindPipeline                     // сборка упала
+	KindConflict                     // конфликт с целевой веткой
+	KindApproved                     // апрувы собраны
+	KindComment                      // новый комментарий
+	KindTaskState                    // таска сменила статус
+	KindRelease                      // MR попал в релизную ветку
+	KindReleaseFailed                // сборка релиза с твоим MR упала
+	KindReleaseBuilt                 // релиз с твоим MR собрался
+	KindChangesRequested             // в твоём MR запросили изменения
+	KindThreads                      // в твоём MR появились нерешённые треды
+	KindPollFailed                   // опрос не может обновить данные
+	KindPollRecovered                // опрос снова работает
 )
 
 // Loud — событие требует действия, уведомлению положен звук; остальные приходят тихо.
 func (k Kind) Loud() bool {
-	return k == KindReview || k == KindPipeline || k == KindConflict || k == KindApproved || k == KindReleaseFailed
+	switch k {
+	case KindReview, KindPipeline, KindConflict, KindApproved, KindReleaseFailed, KindChangesRequested, KindPollFailed:
+		return true
+	}
+	return false
 }
 
 type Event struct {
@@ -143,6 +151,32 @@ func mrEvents(task *domain.Task, mr *domain.MR, p domain.Policy) []Event {
 			Body:     "Ветка " + mr.SourceBranch,
 			URL:      pl.WebURL,
 		})
+	}
+
+	if mr.Open() {
+		for _, r := range mr.Reviewers {
+			if mr.DecisionOf(r.User.Username) == domain.DecisionChanges {
+				events = append(events, Event{
+					Key:      fmt.Sprintf("changes:%d:%s", mr.ID, r.User.Username),
+					Kind:     KindChangesRequested,
+					Title:    "Запрошены изменения",
+					Subtitle: about,
+					Body:     displayName(r.User),
+					URL:      mr.WebURL,
+				})
+			}
+		}
+		// Один раз на MR: каждый новый тред и так приходит комментарием.
+		if !mr.DiscussionsResolved {
+			events = append(events, Event{
+				Key:      fmt.Sprintf("threads:%d", mr.ID),
+				Kind:     KindThreads,
+				Title:    "Нерешённые треды",
+				Subtitle: about,
+				Body:     "Перед мержем их нужно закрыть",
+				URL:      mr.WebURL,
+			})
+		}
 	}
 
 	if mr.Open() && mr.HasConflicts {

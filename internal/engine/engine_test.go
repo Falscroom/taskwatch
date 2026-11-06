@@ -3,8 +3,10 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -583,5 +585,51 @@ func TestWaitUpdate(t *testing.T) {
 	h.tick(t)
 	if h.eng.Version() != v0+2 {
 		t.Errorf("tick must bump the version: %d", h.eng.Version())
+	}
+}
+
+// Опрос сломался: первая ошибка — только быстрый повтор, со второй —
+// одно уведомление на серию; заработал — «снова на связи».
+func TestPollHealthNotifications(t *testing.T) {
+	defer func(d time.Duration) { pollRetry = d }(pollRetry)
+	pollRetry = time.Millisecond
+	h := newHarness(t, false, nil)
+	h.tick(t) // первый запуск: запоминаем события, ничего не шлём
+	ctx := context.Background()
+
+	h.srv.FailWith(http.StatusUnauthorized)
+	if err := h.eng.Tick(ctx); err == nil || len(h.sent) != 0 {
+		t.Fatalf("first failure: err = %v, sent = %v", err, h.sent)
+	}
+	select {
+	case <-h.eng.refresh:
+	case <-time.After(time.Second):
+		t.Fatal("first failure must schedule a quick retry")
+	}
+
+	_ = h.eng.Tick(ctx)
+	_ = h.eng.Tick(ctx)
+	if len(h.sent) != 1 || h.sent[0].title != "taskwatch не может обновить данные" ||
+		h.sent[0].message != "Токен не подходит или истёк — обнови его в настройках" {
+		t.Fatalf("failures: sent = %+v", h.sent)
+	}
+
+	h.srv.FailWith(0)
+	h.tick(t)
+	h.tick(t)
+	if len(h.sent) != 2 || h.sent[1].title != "taskwatch снова на связи" {
+		t.Errorf("recovery: sent = %+v", h.sent)
+	}
+}
+
+func TestPollProblem(t *testing.T) {
+	cases := map[string]error{
+		"Нет связи с сервером — проверь VPN или сеть": &net.DNSError{Err: "no such host", Name: "gitlab.example.com"},
+		"collect: gitlab: boom": errors.New("gitlab:\n boom"),
+	}
+	for want, err := range cases {
+		if got := pollProblem(fmt.Errorf("collect: %w", err)); got != want {
+			t.Errorf("pollProblem(%v) = %q, want %q", err, got, want)
+		}
 	}
 }
