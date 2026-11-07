@@ -25,6 +25,28 @@ export function ago(iso, now = Date.now()) {
   return `${Math.floor(s / 3600)} ч назад`;
 }
 
+/**
+ * updatedLabel — что стоит у кнопки «Обновить». Пока данных нет, движок держит
+ * нулевое время: без ошибки это ожидание первого опроса, с ошибкой — опрос уже
+ * был и не удался, и «загрузка…» висела бы вечно.
+ * @param {{updatedAt: string, error?: string}} v
+ * @param {number} [now]
+ */
+export function updatedLabel(v, now = Date.now()) {
+  if (!loaded(v.updatedAt)) return v.error ? "не удалось" : "загрузка…";
+  return ago(v.updatedAt, now);
+}
+
+/**
+ * emptyText — что писать вместо списка: ждём первый опрос, он не удался
+ * (причина — строкой выше) или всё спокойно.
+ * @param {{updatedAt: string, error?: string}} v
+ */
+export function emptyText(v) {
+  if (loaded(v.updatedAt)) return "Ничего не требует внимания";
+  return v.error ? "Данных пока нет" : "Загружаю…";
+}
+
 const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 
 /**

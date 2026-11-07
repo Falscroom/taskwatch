@@ -74,5 +74,7 @@ test("list: tab filters and empty states", () => {
   assert.match(renderList(v, "review", new Set()), /mr:9/);
   assert.match(renderList(v, "mine", new Set()), /Ничего не требует внимания/);
   assert.match(renderList(view([], "0001-01-01T00:00:00Z"), "needs", new Set()), /Загружаю…/);
+  const failed = { ...view([], "0001-01-01T00:00:00Z"), error: "Нет связи с gitlab.xbet.lan" };
+  assert.match(renderList(failed, "needs", new Set()), /Данных пока нет/, "упавший первый опрос — не загрузка"); 
   assert.match(renderList(v, "unknown-tab", new Set()), /mr:9/, "unknown tab falls back to needs");
 });

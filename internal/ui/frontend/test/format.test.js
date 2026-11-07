@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ago, esc, fmtDur, loaded, muteLabel, notice, wakeLabel } from "../js/format.js";
+import { ago, emptyText, esc, fmtDur, loaded, muteLabel, notice, updatedLabel, wakeLabel } from "../js/format.js";
 
 test("esc", () => {
   assert.equal(esc(`<a href="x">'&'</a>`), "&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;");
@@ -70,4 +70,19 @@ test("notice: ошибка, сон, и то и другое", () => {
 
   // Подробностей нет — «подробнее» показывать нечего.
   assert.equal(notice({ error: "boom" }, now).detail, "");
+});
+
+// Первый опрос упал — данных нет и не будет до следующего; «загрузка…»
+// и «Загружаю…» висели бы вечно.
+test("updatedLabel / emptyText: провалившийся первый опрос — не загрузка", () => {
+  const now = Date.parse("2026-11-07T12:00:00Z");
+  const never = "0001-01-01T00:00:00Z";
+
+  assert.equal(updatedLabel({ updatedAt: never }, now), "загрузка…");
+  assert.equal(updatedLabel({ updatedAt: never, error: "Нет связи" }, now), "не удалось");
+  assert.equal(updatedLabel({ updatedAt: "2026-11-07T10:00:00Z", error: "Нет связи" }, now), "2 ч назад");
+
+  assert.equal(emptyText({ updatedAt: never }), "Загружаю…");
+  assert.equal(emptyText({ updatedAt: never, error: "Нет связи" }), "Данных пока нет");
+  assert.equal(emptyText({ updatedAt: "2026-11-07T10:00:00Z", error: "Нет связи" }), "Ничего не требует внимания");
 });

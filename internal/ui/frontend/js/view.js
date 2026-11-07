@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import { markQueued, pending } from "./batch.js";
 import { renderList } from "./cards.js";
 import { $, sleep, toast } from "./dom.js";
-import { ago, notice } from "./format.js";
+import { notice, updatedLabel } from "./format.js";
 import { state } from "./store.js";
 
 export function render() {
@@ -13,7 +13,7 @@ export function render() {
   });
   const v = state.view;
   if (!v) return;
-  $("updated").textContent = ago(v.updatedAt);
+  $("updated").textContent = updatedLabel(v);
   $("needs-count").textContent = String(v.needsYou);
   paintNotice(v);
   $("list").innerHTML = renderList(v, state.tab, state.open);

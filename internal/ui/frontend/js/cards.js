@@ -1,7 +1,7 @@
 // @ts-check
 // Карточки и группы: чистые функции «вид с сервера → HTML», без DOM.
 // Кликабельные элементы помечены data-action — их разбирает actions.js.
-import { esc, loaded, muteLabel } from "./format.js";
+import { emptyText, esc, muteLabel } from "./format.js";
 
 /**
  * @typedef {{username: string, name: string, initials: string, decision?: string}} Person
@@ -137,5 +137,5 @@ export function renderList(v, tabName, open, now = Date.now()) {
       : `<div class="group-title">${GROUPS[g]}</div>`;
     if (isOpen) html += items.map((c) => renderCard(c, now)).join("");
   }
-  return html || `<div class="empty">${loaded(v.updatedAt) ? "Ничего не требует внимания" : "Загружаю…"}</div>`;
+  return html || `<div class="empty">${emptyText(v)}</div>`;
 }
