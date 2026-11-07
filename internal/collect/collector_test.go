@@ -13,6 +13,7 @@ import (
 
 	"taskwatch/internal/collect"
 	"taskwatch/internal/domain"
+	"taskwatch/internal/failure"
 	"taskwatch/internal/integrations/gitlab"
 	"taskwatch/internal/integrations/httpx"
 	"taskwatch/internal/integrations/youtrack"
@@ -349,8 +350,12 @@ func TestCollectIsStateless(t *testing.T) {
 }
 
 func TestCollectLoadError(t *testing.T) {
-	src := &fakeMRs{authored: mrs(4, func(int) string { return "x" }), loadErr: errors.New("boom")}
-	if _, err := collect.New(nil, src, collect.Options{}).Collect(context.Background()); err == nil || err.Error() != "boom" {
-		t.Errorf("err = %v", err)
+	boom := errors.New("boom")
+	src := &fakeMRs{authored: mrs(4, func(int) string { return "x" }), loadErr: boom}
+	_, err := collect.New(nil, src, collect.Options{}).Collect(context.Background())
+	// Ошибка помечена службой — видно, что отвалился GitLab, — но исходная
+	// из неё по-прежнему достаётся.
+	if !errors.Is(err, boom) || failure.Reason(err) != "GitLab: boom" {
+		t.Errorf("err = %v, причина = %q", err, failure.Reason(err))
 	}
 }

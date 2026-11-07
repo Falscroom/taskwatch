@@ -41,6 +41,21 @@ export function wakeLabel(iso, now = Date.now()) {
   return `в ${WEEKDAYS[t.getDay()]} ${hm}`;
 }
 
+/**
+ * notice — что показать строкой над списком: ошибку опроса, сон вне рабочего
+ * времени или ничего. Раньше это были две плашки сразу, красная и серая, и они
+ * спорили друг с другом; теперь сон уходит второй строкой под ошибку.
+ * @param {{error?: string, errorDetail?: string, sleepUntil?: string}} v
+ * @param {number} [now]
+ * @returns {{bad: boolean, text: string, sub: string, detail: string} | null}
+ */
+export function notice(v, now = Date.now()) {
+  const asleep = v.sleepUntil ? `Вне рабочего времени · опрос ${wakeLabel(v.sleepUntil, now)} · «Обновить» — опросить сейчас` : "";
+  if (v.error) return { bad: true, text: v.error, sub: asleep, detail: v.errorDetail || "" };
+  if (asleep) return { bad: false, text: asleep, sub: "", detail: "" };
+  return null;
+}
+
 const MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
 /**

@@ -1,13 +1,11 @@
 package engine
 
 import (
-	"errors"
 	"fmt"
-	"net"
-	"strings"
 	"time"
 
 	"taskwatch/internal/alerts"
+	"taskwatch/internal/failure"
 )
 
 // pollRetry — через сколько перепроверить после первой ошибки опроса.
@@ -37,7 +35,7 @@ func (h *health) failed(err error) (ev *alerts.Event, retry bool) {
 		Key:    fmt.Sprintf("poll-failed:%d", time.Now().UnixNano()),
 		Kind:   alerts.KindPollFailed,
 		Title:  "taskwatch не может обновить данные",
-		Body:   pollProblem(err),
+		Body:   failure.Reason(err),
 		Thread: "taskwatch",
 	}, false
 }
@@ -56,23 +54,4 @@ func (h *health) ok() *alerts.Event {
 		Body:   "Данные обновляются",
 		Thread: "taskwatch",
 	}
-}
-
-// pollProblem — причина ошибки опроса для человека: токен, сеть или текст ошибки.
-func pollProblem(err error) string {
-	var status interface{ StatusCode() int }
-	if errors.As(err, &status) && (status.StatusCode() == 401 || status.StatusCode() == 403) {
-		return "Токен не подходит или истёк — обнови его в настройках"
-	}
-	var netErr net.Error
-	var dnsErr *net.DNSError
-	var opErr *net.OpError
-	if errors.As(err, &dnsErr) || errors.As(err, &opErr) || errors.As(err, &netErr) {
-		return "Нет связи с сервером — проверь VPN или сеть"
-	}
-	msg := strings.Join(strings.Fields(err.Error()), " ")
-	if r := []rune(msg); len(r) > 140 {
-		msg = string(r[:140]) + "…"
-	}
-	return msg
 }

@@ -26,8 +26,15 @@
         <button data-action="tab" data-tab="all">Все</button>
       </nav>
     </header>
-    <div class="error" id="error" hidden></div>
-    <div class="offhours" id="offhours" hidden></div>
+    <div class="notice" id="notice" hidden>
+      <div class="notice-line">
+        <span class="notice-dot"></span>
+        <span class="notice-text" id="notice-text"></span>
+        <button class="notice-more" id="notice-more" data-action="notice-details" hidden>подробнее</button>
+      </div>
+      <div class="notice-sub" id="notice-sub" hidden></div>
+      <pre class="notice-raw" id="notice-raw" hidden></pre>
+    </div>
     <section class="list" id="list"></section>
     <div class="toast" id="toast" hidden></div>
 

@@ -14,7 +14,7 @@ import { esc, loaded, muteLabel } from "./format.js";
  *   behind: number, comments: number, release: Release[], badges: Badge[],
  *   action?: {label: string, issueId: string}, wait?: string, muted?: boolean, mutedUntil?: string
  * }} Card
- * @typedef {{version: number, updatedAt: string, error?: string, needsYou: number, cards: Card[], sleepUntil?: string}} View
+ * @typedef {{version: number, updatedAt: string, error?: string, errorDetail?: string, needsYou: number, cards: Card[], sleepUntil?: string}} View
  */
 
 /** @type {Record<string, string>} */

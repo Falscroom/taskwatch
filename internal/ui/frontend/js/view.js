@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import { markQueued, pending } from "./batch.js";
 import { renderList } from "./cards.js";
 import { $, sleep, toast } from "./dom.js";
-import { ago, wakeLabel } from "./format.js";
+import { ago, notice } from "./format.js";
 import { state } from "./store.js";
 
 export function render() {
@@ -15,12 +15,40 @@ export function render() {
   if (!v) return;
   $("updated").textContent = ago(v.updatedAt);
   $("needs-count").textContent = String(v.needsYou);
-  $("error").hidden = !v.error;
-  $("error").textContent = v.error || "";
-  $("offhours").hidden = !v.sleepUntil;
-  $("offhours").textContent = v.sleepUntil ? `Вне рабочего времени · опрос ${wakeLabel(v.sleepUntil)} · «Обновить» — опросить сейчас` : "";
+  paintNotice(v);
   $("list").innerHTML = renderList(v, state.tab, state.open);
   markQueued($("list"), pending);
+}
+
+// Подробности ошибки свёрнуты, пока их не раскроют, и остаются раскрытыми до
+// следующей ошибки: render зовётся по таймеру и не должен их захлопывать.
+let detailsOpen = false;
+let detailsOf = "";
+
+/** toggleDetails — «подробнее»: показать сырую ошибку или спрятать обратно. */
+export function toggleDetails() {
+  detailsOpen = !detailsOpen;
+  render();
+}
+
+/** paintNotice — строка над списком: ошибка опроса и/или сон вне рабочего времени. */
+function paintNotice(/** @type {import("./cards.js").View} */ v) {
+  const n = notice(v);
+  const detail = n?.detail || "";
+  if (detail !== detailsOf) {
+    detailsOf = detail;
+    detailsOpen = false;
+  }
+  $("notice").hidden = !n;
+  if (!n) return;
+  $("notice").classList.toggle("bad", n.bad);
+  $("notice-text").textContent = n.text;
+  $("notice-sub").textContent = n.sub;
+  $("notice-sub").hidden = !n.sub;
+  $("notice-more").hidden = !detail;
+  $("notice-more").textContent = detailsOpen ? "скрыть" : "подробнее";
+  $("notice-raw").textContent = detail;
+  $("notice-raw").hidden = !detail || !detailsOpen;
 }
 
 // watchView держит вид свежим: long-poll /api/view?after=<version> отвечает,

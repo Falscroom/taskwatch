@@ -8,7 +8,7 @@ import { toast } from "./dom.js";
 import { closeMute, muteFor, openMute } from "./mute.js";
 import { clearSecrets, closeSettings, openSettings, pickBoards, testSettings, toggleLoginItem, useBoard } from "./settings.js";
 import { card, setTab, state } from "./store.js";
-import { render } from "./view.js";
+import { render, toggleDetails } from "./view.js";
 
 /** @typedef {(el: HTMLElement) => void | Promise<void>} Action */
 
@@ -68,6 +68,8 @@ const actions = {
       throw err;
     }
   },
+
+  "notice-details": toggleDetails,
 
   "settings-open": openSettings,
   "settings-close": closeSettings,

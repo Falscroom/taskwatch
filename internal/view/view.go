@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"taskwatch/internal/domain"
+	"taskwatch/internal/failure"
 )
 
 // Группы карточек — это контракт с фронтендом.
@@ -102,9 +103,13 @@ type View struct {
 	// long-poll, чтобы дождаться следующей.
 	Version   uint64    `json:"version"`
 	UpdatedAt time.Time `json:"updatedAt"`
-	Error     string    `json:"error,omitempty"`
-	NeedsYou  int       `json:"needsYou"`
-	Cards     []Card    `json:"cards"`
+	// Error — почему не удалось обновить, словами для человека; тот же текст
+	// уходит в уведомление. ErrorDetail — та же ошибка целиком, её показывает
+	// «подробнее»: нужна, когда причины мало и надо видеть ответ сервера.
+	Error       string `json:"error,omitempty"`
+	ErrorDetail string `json:"errorDetail,omitempty"`
+	NeedsYou    int    `json:"needsYou"`
+	Cards       []Card `json:"cards"`
 	// SleepUntil — вне рабочего времени: когда опрос проснётся (RFC 3339).
 	SleepUntil string `json:"sleepUntil,omitempty"`
 }
@@ -112,7 +117,12 @@ type View struct {
 func Build(snap *domain.Snapshot, updated time.Time, err error, p domain.Policy, mutes domain.MuteRules) View {
 	v := View{UpdatedAt: updated, Cards: []Card{}}
 	if err != nil {
-		v.Error = err.Error()
+		v.Error = failure.Reason(err)
+		// Подробности — только если добавляют что-то к причине: иначе в окне
+		// будет «подробнее», за которым ровно тот же текст.
+		if detail := failure.Detail(err); detail != v.Error {
+			v.ErrorDetail = detail
+		}
 	}
 	if snap == nil {
 		return v

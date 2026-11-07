@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ago, esc, fmtDur, loaded, muteLabel, wakeLabel } from "../js/format.js";
+import { ago, esc, fmtDur, loaded, muteLabel, notice, wakeLabel } from "../js/format.js";
 
 test("esc", () => {
   assert.equal(esc(`<a href="x">'&'</a>`), "&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;");
@@ -46,4 +46,28 @@ test("wakeLabel", () => {
   assert.equal(wakeLabel(new Date(2026, 10, 6, 21, 30).toISOString(), now), "в 21:30");
   assert.equal(wakeLabel(new Date(2026, 10, 7, 10, 0).toISOString(), now), "завтра в 10:00");
   assert.equal(wakeLabel(new Date(2026, 10, 9, 10, 0).toISOString(), now), "в пн 10:00");
+});
+
+test("notice: ошибка, сон, и то и другое", () => {
+  const now = Date.parse("2026-11-07T22:00:00Z");
+  const sleep = "2026-11-09T09:00:00+03:00";
+
+  assert.equal(notice({}, now), null);
+
+  assert.deepEqual(notice({ sleepUntil: sleep }, now), {
+    bad: false,
+    text: `Вне рабочего времени · опрос ${wakeLabel(sleep, now)} · «Обновить» — опросить сейчас`,
+    sub: "",
+    detail: "",
+  });
+
+  // Ошибка важнее сна, но сон не теряется — уходит второй строкой.
+  const both = notice({ error: "Нет связи с gitlab.xbet.lan — включи VPN или проверь сеть", errorDetail: "dial tcp: boom", sleepUntil: sleep }, now);
+  assert.equal(both.bad, true);
+  assert.equal(both.text, "Нет связи с gitlab.xbet.lan — включи VPN или проверь сеть");
+  assert.equal(both.detail, "dial tcp: boom");
+  assert.match(both.sub, /^Вне рабочего времени/);
+
+  // Подробностей нет — «подробнее» показывать нечего.
+  assert.equal(notice({ error: "boom" }, now).detail, "");
 });

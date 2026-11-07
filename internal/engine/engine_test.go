@@ -3,10 +3,8 @@ package engine
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -610,7 +608,7 @@ func TestPollHealthNotifications(t *testing.T) {
 	_ = h.eng.Tick(ctx)
 	_ = h.eng.Tick(ctx)
 	if len(h.sent) != 1 || h.sent[0].title != "taskwatch не может обновить данные" ||
-		h.sent[0].message != "Токен не подходит или истёк — обнови его в настройках" {
+		h.sent[0].message != "GitLab не принимает токен — обнови его в настройках" {
 		t.Fatalf("failures: sent = %+v", h.sent)
 	}
 
@@ -619,18 +617,6 @@ func TestPollHealthNotifications(t *testing.T) {
 	h.tick(t)
 	if len(h.sent) != 2 || h.sent[1].title != "taskwatch снова на связи" {
 		t.Errorf("recovery: sent = %+v", h.sent)
-	}
-}
-
-func TestPollProblem(t *testing.T) {
-	cases := map[string]error{
-		"Нет связи с сервером — проверь VPN или сеть": &net.DNSError{Err: "no such host", Name: "gitlab.example.com"},
-		"collect: gitlab: boom": errors.New("gitlab:\n boom"),
-	}
-	for want, err := range cases {
-		if got := pollProblem(fmt.Errorf("collect: %w", err)); got != want {
-			t.Errorf("pollProblem(%v) = %q, want %q", err, got, want)
-		}
 	}
 }
 

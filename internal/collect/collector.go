@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"taskwatch/internal/domain"
+	"taskwatch/internal/failure"
 )
 
 // TaskSource — откуда берутся таски (YouTrack).
@@ -57,15 +58,22 @@ func (c *Collector) Collect(ctx context.Context) (*domain.Snapshot, error) {
 		authored, review []*domain.MR
 	)
 
-	// Списки независимы — запрашиваем разом.
+	// Списки независимы — запрашиваем разом. Ошибку помечаем службой: наружу
+	// уходит первая, и без пометки не сказать, GitLab отвалился или YouTrack.
 	g, gctx := errgroup.WithContext(ctx)
 	if c.tasks != nil {
-		g.Go(func() (err error) { tasks, err = c.tasks.Tasks(gctx); return err })
+		g.Go(func() (err error) { tasks, err = c.tasks.Tasks(gctx); return failure.Wrap(failure.YouTrack, err) })
 	}
 	if c.mrs != nil {
 		since := time.Now().Add(-c.opts.Lookback)
-		g.Go(func() (err error) { authored, err = c.mrs.Authored(gctx, since); return err })
-		g.Go(func() (err error) { review, err = c.mrs.ReviewRequested(gctx); return err })
+		g.Go(func() (err error) {
+			authored, err = c.mrs.Authored(gctx, since)
+			return failure.Wrap(failure.GitLab, err)
+		})
+		g.Go(func() (err error) {
+			review, err = c.mrs.ReviewRequested(gctx)
+			return failure.Wrap(failure.GitLab, err)
+		})
 	}
 	if err := g.Wait(); err != nil {
 		return nil, err
@@ -78,11 +86,14 @@ func (c *Collector) Collect(ctx context.Context) (*domain.Snapshot, error) {
 	g, gctx = errgroup.WithContext(ctx)
 	g.SetLimit(c.concurrency())
 	for _, t := range tasks {
-		g.Go(func() (err error) { t.Comments, err = c.tasks.Comments(gctx, t.ID); return err })
+		g.Go(func() (err error) {
+			t.Comments, err = c.tasks.Comments(gctx, t.ID)
+			return failure.Wrap(failure.YouTrack, err)
+		})
 	}
 	for _, list := range [][]*domain.MR{authored, review} {
 		for i, mr := range list {
-			g.Go(func() (err error) { list[i], err = c.mrs.Load(gctx, mr); return err })
+			g.Go(func() (err error) { list[i], err = c.mrs.Load(gctx, mr); return failure.Wrap(failure.GitLab, err) })
 		}
 	}
 	if err := g.Wait(); err != nil {

@@ -62,8 +62,19 @@ h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
 .tabs button.active { background: rgba(255, 255, 255, 0.09); color: var(--text); }
 .count { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 10px; background: rgba(95, 212, 176, 0.18); color: var(--teal); font-size: 12px; font-weight: 600; text-align: center; }
 
-.error { margin: 0 18px 6px; padding: 8px 12px; border-radius: 10px; background: rgba(240, 112, 122, 0.12); color: var(--red); font-size: 12px; }
-.offhours { margin: 0 18px 6px; padding: 8px 12px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); color: var(--muted); font-size: 12px; }
+/* notice — одна строка над списком: ошибка опроса и/или сон вне рабочего
+   времени. Ошибка не кричит красным блоком: точка слева плюс обычный текст,
+   а сырую ошибку показывает «подробнее». */
+.notice { margin: 0 18px 6px; padding: 8px 12px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); color: var(--muted); font-size: 12px; }
+.notice-line { display: flex; align-items: flex-start; gap: 7px; }
+.notice-dot { display: none; flex: none; width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--red); }
+.notice.bad .notice-dot { display: block; }
+.notice.bad .notice-text { color: var(--text); }
+.notice-text { flex: 1; min-width: 0; }
+.notice-more { flex: none; margin-top: 1px; color: var(--grey); font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; }
+.notice-more:hover { color: var(--muted); }
+.notice-sub { margin-top: 5px; color: var(--grey); }
+.notice-raw { margin: 8px 0 0; padding: 7px 9px; border-radius: 8px; background: rgba(0, 0, 0, 0.25); color: var(--grey); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow-y: auto; user-select: text; -webkit-user-select: text; }
 .workdays { display: flex; flex-wrap: wrap; gap: 6px 12px; }
 .settings-form label.day { display: flex; align-items: center; gap: 5px; grid-auto-flow: column; color: var(--text); font-size: 12.5px; }
 .settings-hint.left { text-align: left; }
